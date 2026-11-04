@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="AnimatedWalls.Engine/AnimatedWalls.Engine.csproj" />
+  <Project Path="AnimatedWalls.Engine.Tests/AnimatedWalls.Engine.Tests.csproj" />
+</Solution>

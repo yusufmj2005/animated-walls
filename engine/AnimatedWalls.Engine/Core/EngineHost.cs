@@ -1,0 +1,224 @@
+using System.Diagnostics;
+using System.Text.Json;
+using System.Threading.Channels;
+using AnimatedWalls.Engine.Desktop;
+using AnimatedWalls.Engine.Diagnostics;
+using AnimatedWalls.Engine.IPC;
+using AnimatedWalls.Engine.Playback;
+using AnimatedWalls.Engine.Rendering;
+using AnimatedWalls.Engine.Visibility;
+
+namespace AnimatedWalls.Engine.Core;
+
+/// <summary>
+/// Owns the engine's services and its lifetime. The engine runs while its parent does:
+/// it exits on a shutdown request, when the authenticated client disconnects, or when
+/// stdin closes. The stdin check means a crashed Electron cannot leave an orphan engine,
+/// and it needs no polling and has no PID reuse problem.
+/// </summary>
+public sealed class EngineHost : IDisposable
+{
+    private const string LogSource = "engine.host";
+    private static readonly TimeSpan GpuUsageWindow = TimeSpan.FromMilliseconds(500);
+
+    private readonly string _pipeName;
+    private readonly Stream _stdin;
+    private readonly StructuredLogger _logger;
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly EngineCounters _counters = new();
+    private readonly Stopwatch _uptime = Stopwatch.StartNew();
+    private readonly Channel<EngineState> _stateEvents = Channel.CreateBounded<EngineState>(new BoundedChannelOptions(1)
+    {
+        // Only the latest state matters, so a slow client skips intermediate ones.
+        FullMode = BoundedChannelFullMode.DropOldest,
+        SingleReader = true,
+    });
+
+    public EngineHost(string pipeName, Stream stdin, StructuredLogger logger)
+    {
+        _pipeName = pipeName;
+        _stdin = stdin;
+        _logger = logger;
+    }
+
+    public async Task<int> RunAsync(byte[] token)
+    {
+        _logger.Info(LogSource, "engine.start", new Dictionary<string, object?>
+        {
+            ["pid"] = Environment.ProcessId,
+            ["version"] = EngineInfo.Version,
+            ["protocol"] = EngineInfo.ProtocolVersion,
+            ["os"] = Environment.OSVersion.VersionString,
+            ["rendererImplemented"] = EngineInfo.RendererImplemented,
+        });
+
+        var gpu = DetectGpu();
+        var coordinator = new PlaybackCoordinator(_logger, _counters, gpu);
+        coordinator.StateChanged += state => _stateEvents.Writer.TryWrite(state);
+
+        using var pump = new DesktopSignalPump(_logger, _counters);
+        var monitor = new VisibilityMonitor(pump, coordinator, _counters, _logger);
+        pump.SessionEnding += () =>
+        {
+            _logger.Info(LogSource, "engine.session-ending");
+            _shutdown.Cancel();
+        };
+        await pump.StartAsync().ConfigureAwait(false);
+
+        var dispatcher = new RpcDispatcher();
+        RegisterMethods(dispatcher, coordinator, gpu);
+
+        using var server = new PipeServer(_pipeName, new SessionAuthenticator(token), dispatcher, _logger);
+        server.ClientDisconnected += () =>
+        {
+            _logger.Info(LogSource, "engine.client-gone");
+            _shutdown.Cancel();
+        };
+        server.Listen();
+
+        // Evaluate only after the listener exists, so the first state has somewhere to go.
+        monitor.Start();
+
+        // The supervisor waits for this line before connecting.
+        Console.Out.WriteLine(JsonSerializer.Serialize(new ReadyMessage("engine.ready", _pipeName, Environment.ProcessId), ProtocolJson.Default.ReadyMessage));
+        Console.Out.Flush();
+
+        var serverTask = server.RunAsync(_shutdown.Token);
+        var eventsTask = ForwardEventsAsync(server, _shutdown.Token);
+        var parentTask = WatchParentAsync(_shutdown.Token);
+
+        var exitCode = 0;
+        try
+        {
+            await Task.WhenAll(serverTask, eventsTask, parentTask).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal path: shutdown cancels all three.
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(LogSource, "engine.failed", exception);
+            exitCode = 1;
+        }
+
+        _logger.Info(LogSource, "engine.exit", new Dictionary<string, object?>
+        {
+            ["exitCode"] = exitCode,
+            ["uptimeMs"] = _uptime.ElapsedMilliseconds,
+        });
+        return exitCode;
+    }
+
+    private GpuCapabilities DetectGpu()
+    {
+        try
+        {
+            var gpu = GpuCapabilityDetector.Detect();
+            _logger.Info("engine.rendering", "gpu.detected", new Dictionary<string, object?>
+            {
+                ["status"] = gpu.Status,
+                ["selectedAdapter"] = gpu.SelectedAdapter?.Name,
+                ["featureLevel"] = gpu.SelectedAdapter?.FeatureLevel,
+                ["hardwareDecode"] = gpu.SelectedAdapter?.HardwareDecodeCodecs.ToArray(),
+                ["adapters"] = gpu.Adapters.Select(adapter => $"{adapter.Name}: {adapter.RejectedReason ?? "usable"}").ToArray(),
+                ["webView2"] = gpu.WebView2Version,
+            });
+            if (!gpu.IsSupported)
+            {
+                _logger.Error("engine.rendering", "gpu.unsupported", new Dictionary<string, object?> { ["reasons"] = gpu.UnsupportedReasons.ToArray() });
+            }
+            return gpu;
+        }
+        catch (Exception exception)
+        {
+            // A detection failure means playback must stay blocked, and the engine must
+            // stay up so the UI can report why.
+            _logger.Error("engine.rendering", "gpu.detection-failed", exception);
+            return new GpuCapabilities("unsupported", null, [], [$"Graphics detection failed: {exception.Message}"], null, DateTimeOffset.UtcNow.ToString("O"));
+        }
+    }
+
+    private void RegisterMethods(RpcDispatcher dispatcher, PlaybackCoordinator coordinator, GpuCapabilities gpu)
+    {
+        var json = ProtocolJson.Default;
+
+        dispatcher.Register("engine.health", json.EngineHealth, ReadHealth);
+        dispatcher.Register("engine.capabilities", json.GpuCapabilities, () => gpu);
+        dispatcher.Register("engine.state", json.EngineState, () => coordinator.Current);
+        dispatcher.Register("engine.diagnostics", json.EngineDiagnostics, () => new EngineDiagnostics(
+            ReadHealth(),
+            coordinator.Current,
+            gpu,
+            GpuUsageSampler.Sample(Environment.ProcessId, GpuUsageWindow),
+            DesktopHostLocator.Probe(),
+            _logger.FilePath));
+        dispatcher.Register("engine.shutdown", json.ShutdownResult, () =>
+        {
+            _logger.Info(LogSource, "engine.shutdown-requested");
+            // Let the response leave before tearing the pipe down.
+            _ = Task.Delay(50).ContinueWith(_ => _shutdown.Cancel(), TaskScheduler.Default);
+            return new ShutdownResult(true);
+        });
+
+        dispatcher.Register("playback.setAssignments", json.SetAssignmentsParams, json.EngineState, parameters => coordinator.SetAssignments(parameters.Assignments));
+        dispatcher.Register("playback.setPaused", json.SetPausedParams, json.EngineState, parameters => coordinator.SetPaused(parameters.Paused));
+        dispatcher.Register("playback.configure", json.PlaybackConfig, json.EngineState, coordinator.Configure);
+        dispatcher.Register("diagnostics.setLogLevel", json.SetLogLevelParams, json.SetLogLevelResult, parameters =>
+        {
+            if (!StructuredLogger.TryParseLevel(parameters.Level, out var level))
+            {
+                throw new RpcDispatcher.RpcFault(RpcErrorCodes.InvalidParams, $"Unknown log level '{parameters.Level}'.");
+            }
+            _logger.Level = level;
+            return new SetLogLevelResult(parameters.Level.ToLowerInvariant());
+        });
+    }
+
+    private EngineHealth ReadHealth()
+    {
+        using var process = Process.GetCurrentProcess();
+        return new EngineHealth(
+            Environment.ProcessId,
+            EngineInfo.Version,
+            EngineInfo.ProtocolVersion,
+            _uptime.ElapsedMilliseconds,
+            process.WorkingSet64,
+            GC.GetTotalMemory(false),
+            process.Threads.Count,
+            EngineInfo.RendererImplemented,
+            _counters.Snapshot());
+    }
+
+    private async Task ForwardEventsAsync(PipeServer server, CancellationToken cancellationToken)
+    {
+        await foreach (var state in _stateEvents.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            try
+            {
+                await server.SendEventAsync("state.changed", state, ProtocolJson.Default.EngineState, cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException exception)
+            {
+                _logger.Warn("engine.ipc", "event.undeliverable", new Dictionary<string, object?> { ["message"] = exception.Message });
+            }
+        }
+    }
+
+    private async Task WatchParentAsync(CancellationToken cancellationToken)
+    {
+        var buffer = new byte[64];
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var read = await _stdin.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                _logger.Info(LogSource, "engine.parent-gone");
+                _shutdown.Cancel();
+                return;
+            }
+        }
+    }
+
+    public void Dispose() => _shutdown.Dispose();
+}

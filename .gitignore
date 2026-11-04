@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+release/
+engine/**/bin/
+engine/**/obj/
+engine/publish/
+apps/desktop/resources/engine/
+
+# Test and tooling output
+coverage/
+test-results/
+.vite/
+*.tsbuildinfo
+TestResults/
+
+# Generated sample packages
+samples/dist/
+
+# Runtime data
+*.log
+*.db
+*.db-wal
+*.db-shm
+
+# Editors and OS
+.vs/
+.vscode/
+.idea/
+*.user
+Thumbs.db
+desktop.ini
