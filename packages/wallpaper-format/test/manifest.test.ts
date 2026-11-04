@@ -174,7 +174,7 @@ describe('validatePackageListing', () => {
   const issueCodes = (entries: PackageEntry[]) => validatePackageListing(entries, manifest).map((i) => i.code);
 
   it('accepts a well-formed package', () => {
-    expect(validatePackageListing([...base, file('assets/'), file('assets/app.js')], manifest).filter((i) => i.code !== 'file-type')).toEqual([]);
+    expect(validatePackageListing([...base, file('assets/', { isDirectory: true }), file('assets/app.js')], manifest)).toEqual([]);
   });
 
   it('requires the entry and preview files', () => {

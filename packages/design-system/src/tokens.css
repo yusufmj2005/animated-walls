@@ -1,0 +1,97 @@
+/* Animated Walls design tokens. The UI stays neutral so that wallpapers supply the colour;
+   the single accent is reserved for what is interactive or selected. */
+@theme {
+  --color-canvas: #0a0b0e;
+  --color-surface: #111318;
+  --color-raised: #181b21;
+  --color-overlay: #21252d;
+  --color-line: rgb(255 255 255 / 0.07);
+  --color-line-strong: rgb(255 255 255 / 0.14);
+
+  --color-ink: #eef0f4;
+  --color-ink-2: #a9afba;
+  --color-ink-3: #7e8490;
+
+  --color-accent: #8ea2ff;
+  --color-accent-strong: #aebcff;
+  --color-accent-soft: rgb(142 162 255 / 0.14);
+  --color-on-accent: #0b0e1c;
+
+  --color-ok: #4fd08a;
+  --color-ok-soft: rgb(79 208 138 / 0.13);
+  --color-warn: #f2b64c;
+  --color-warn-soft: rgb(242 182 76 / 0.13);
+  --color-bad: #ff7b7b;
+  --color-bad-soft: rgb(255 123 123 / 0.13);
+
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+
+  --radius-control: 8px;
+  --radius-card: 14px;
+  --radius-hero: 18px;
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --animate-page: page-in 240ms var(--ease-out-quint);
+  --animate-fade: fade-in 160ms ease-out;
+  --animate-rise: rise-in 220ms var(--ease-out-quint);
+
+  @keyframes page-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes rise-in {
+    from { opacity: 0; transform: translateY(10px) scale(0.985); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    overflow: hidden;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--color-accent-soft);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(255 255 255 / 0.1);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(255 255 255 / 0.2);
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+      animation-duration: 1ms !important;
+      transition-duration: 1ms !important;
+    }
+  }
+}

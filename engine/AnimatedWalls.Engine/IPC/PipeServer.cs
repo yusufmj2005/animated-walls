@@ -58,10 +58,9 @@ public sealed class PipeServer(
             await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
             logger.Info(LogSource, "client.connected");
 
-            var wasAuthenticated = false;
             try
             {
-                wasAuthenticated = await ServeClientAsync(pipe, cancellationToken).ConfigureAwait(false);
+                await ServeClientAsync(pipe, cancellationToken).ConfigureAwait(false);
             }
             catch (FrameCodec.ProtocolException exception)
             {
@@ -74,21 +73,40 @@ public sealed class PipeServer(
             catch (IOException exception)
             {
                 logger.Info(LogSource, "client.connection-lost", new Dictionary<string, object?> { ["message"] = exception.Message });
-                wasAuthenticated = _authenticated;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 return;
             }
 
+            // Read before resetting: every exit path above, including a broken pipe, reaches
+            // here, and only losing an authenticated client should end the engine.
+            var wasAuthenticated = _authenticated;
             _authenticated = false;
-            if (pipe.IsConnected) pipe.Disconnect();
+            ResetConnection(pipe);
             logger.Info(LogSource, "client.disconnected");
 
             if (wasAuthenticated)
             {
                 ClientDisconnected?.Invoke();
             }
+        }
+    }
+
+    /// <summary>
+    /// Readies the pipe for the next client. This must not be guarded by IsConnected: when a
+    /// client goes away the pipe is "broken", which reports as not connected, but it still
+    /// has to be disconnected before it can accept a new connection.
+    /// </summary>
+    private void ResetConnection(NamedPipeServerStream pipe)
+    {
+        try
+        {
+            pipe.Disconnect();
+        }
+        catch (InvalidOperationException exception)
+        {
+            logger.Debug(LogSource, "client.already-disconnected", new Dictionary<string, object?> { ["message"] = exception.Message });
         }
     }
 
@@ -100,9 +118,9 @@ public sealed class PipeServer(
         await WriteAsync(JsonSerializer.SerializeToUtf8Bytes(message, ProtocolJson.Default.RpcEvent), cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<bool> ServeClientAsync(NamedPipeServerStream pipe, CancellationToken cancellationToken)
+    private async Task ServeClientAsync(NamedPipeServerStream pipe, CancellationToken cancellationToken)
     {
-        if (!await AuthenticateAsync(pipe, cancellationToken).ConfigureAwait(false)) return false;
+        if (!await AuthenticateAsync(pipe, cancellationToken).ConfigureAwait(false)) return;
 
         _authenticated = true;
         logger.Info(LogSource, "client.authenticated");
@@ -110,7 +128,7 @@ public sealed class PipeServer(
         while (!cancellationToken.IsCancellationRequested)
         {
             var frame = await FrameCodec.ReadFrameAsync(pipe, cancellationToken).ConfigureAwait(false);
-            if (frame is null) return true;
+            if (frame is null) return;
 
             var request = JsonSerializer.Deserialize(frame, ProtocolJson.Default.RpcRequest)
                 ?? throw new FrameCodec.ProtocolException("The request was empty.");
@@ -119,7 +137,6 @@ public sealed class PipeServer(
             // cannot stall health checks and make a healthy engine look hung.
             _ = Task.Run(() => HandleRequestAsync(request, cancellationToken), cancellationToken);
         }
-        return true;
     }
 
     private async Task HandleRequestAsync(RpcRequest request, CancellationToken cancellationToken)

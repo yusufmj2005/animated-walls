@@ -156,27 +156,34 @@ public static class Program
         writer.Flush();
     }
 
-    /// <summary>Reads one line byte by byte so nothing past the token is consumed from stdin.</summary>
+    /// <summary>
+    /// Reads one line byte by byte, so nothing past the token is consumed from stdin. It
+    /// runs on a worker because console reads cannot be cancelled, and the wait is what
+    /// enforces the timeout.
+    /// </summary>
     private static async Task<byte[]?> ReadTokenAsync(Stream stdin)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var line = new List<byte>(64);
-        var single = new byte[1];
-        try
+        var read = Task.Run(() =>
         {
+            var line = new List<byte>(64);
+            var single = new byte[1];
             while (line.Count < 256)
             {
-                var read = await stdin.ReadAsync(single, timeout.Token).ConfigureAwait(false);
-                if (read == 0) return null;
+                if (stdin.Read(single, 0, 1) == 0) return null;
                 if (single[0] == (byte)'\n') break;
                 if (single[0] != (byte)'\r') line.Add(single[0]);
             }
+            return line.Count == 0 ? null : line.ToArray();
+        });
+
+        try
+        {
+            return await read.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (TimeoutException)
         {
             return null;
         }
-        return line.Count == 0 ? null : line.ToArray();
     }
 
     private static Dictionary<string, string?>? ParseArguments(string[] args)

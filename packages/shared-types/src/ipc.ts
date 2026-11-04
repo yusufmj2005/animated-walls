@@ -1,5 +1,4 @@
 import type {
-  DisplayInfo,
   EngineDiagnostics,
   EngineState,
   EngineStatus,
@@ -95,9 +94,6 @@ export interface AnimatedWallsApi {
     restart(): Promise<void>;
     onStatus(listener: (status: EngineStatus) => void): () => void;
     onState(listener: (state: EngineState) => void): () => void;
-  };
-  displays: {
-    list(): Promise<DisplayInfo[]>;
   };
 }
 

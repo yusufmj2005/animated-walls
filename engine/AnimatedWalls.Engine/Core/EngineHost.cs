@@ -83,14 +83,14 @@ public sealed class EngineHost : IDisposable
         Console.Out.WriteLine(JsonSerializer.Serialize(new ReadyMessage("engine.ready", _pipeName, Environment.ProcessId), ProtocolJson.Default.ReadyMessage));
         Console.Out.Flush();
 
+        StartParentWatcher();
         var serverTask = server.RunAsync(_shutdown.Token);
         var eventsTask = ForwardEventsAsync(server, _shutdown.Token);
-        var parentTask = WatchParentAsync(_shutdown.Token);
 
         var exitCode = 0;
         try
         {
-            await Task.WhenAll(serverTask, eventsTask, parentTask).ConfigureAwait(false);
+            await Task.WhenAll(serverTask, eventsTask).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -205,19 +205,35 @@ public sealed class EngineHost : IDisposable
         }
     }
 
-    private async Task WatchParentAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Watches stdin on its own background thread, because reads on a console stream cannot
+    /// be cancelled. A task awaiting one would never finish and would hold up shutdown; a
+    /// background thread blocked in a read simply ends with the process.
+    /// </summary>
+    private void StartParentWatcher()
     {
-        var buffer = new byte[64];
-        while (!cancellationToken.IsCancellationRequested)
+        var thread = new Thread(() =>
         {
-            var read = await _stdin.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-            if (read == 0)
+            var buffer = new byte[64];
+            try
             {
+                while (_stdin.Read(buffer, 0, buffer.Length) > 0)
+                {
+                    // Nothing is sent after the token. Only the end of the stream matters.
+                }
                 _logger.Info(LogSource, "engine.parent-gone");
-                _shutdown.Cancel();
-                return;
             }
-        }
+            catch (Exception exception) when (exception is IOException or ObjectDisposedException)
+            {
+                _logger.Warn(LogSource, "engine.parent-pipe-failed", new Dictionary<string, object?> { ["message"] = exception.Message });
+            }
+            _shutdown.Cancel();
+        })
+        {
+            IsBackground = true,
+            Name = "ParentWatcher",
+        };
+        thread.Start();
     }
 
     public void Dispose() => _shutdown.Dispose();

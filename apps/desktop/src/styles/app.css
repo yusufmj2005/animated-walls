@@ -1,0 +1,17 @@
+@import 'tailwindcss';
+@import '@animated-walls/design-system/tokens.css';
+
+/* Tailwind only scans this app by default. */
+@source '../../../../packages/design-system/src';
+
+@utility drag-region {
+  -webkit-app-region: drag;
+}
+
+@utility no-drag {
+  -webkit-app-region: no-drag;
+}
+
+@utility preview-frame {
+  aspect-ratio: 16 / 9;
+}

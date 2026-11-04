@@ -1,0 +1,35 @@
+appId: app.animatedwalls.desktop
+productName: Animated Walls
+copyright: Copyright (c) 2026 Animated Walls
+directories:
+  output: ../../release
+  buildResources: resources
+files:
+  - out/**/*
+  - package.json
+  - "!**/*.map"
+extraResources:
+  - from: resources/engine
+    to: engine
+  - from: resources/icons
+    to: icons
+asar: true
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+win:
+  target:
+    - nsis
+  icon: resources/icons/app.ico
+  # No certificate yet. Commercial releases must be signed, see docs/architecture.
+  signAndEditExecutable: true
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  artifactName: AnimatedWalls-Setup-${version}.${ext}
