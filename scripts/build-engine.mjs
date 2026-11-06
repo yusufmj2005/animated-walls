@@ -39,6 +39,7 @@ if (dev) {
     '--self-contained', 'true',
     '-p:PublishSingleFile=true',
     '-p:IncludeNativeLibrariesForSelfExtract=true',
+    // Not trimmed: SharpGen.Runtime, which Vortice is built on, is not trim-safe (IL2104).
     '-p:PublishReadyToRun=true',
     '-p:DebugType=none',
   );
