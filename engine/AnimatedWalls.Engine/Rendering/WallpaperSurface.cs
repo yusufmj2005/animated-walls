@@ -46,9 +46,8 @@ public sealed class WallpaperSurface : IDisposable
     // CLSID_MFMediaEngineClassFactory and IID_IMFMediaEngineClassFactory from mfmediaengine.h.
     private static readonly Guid MediaEngineFactoryClsid = new("b44392da-499b-446b-a4cb-005fead0e6d5");
     private static readonly Guid MediaEngineFactoryIid = new("4D645ACE-26AA-4688-9BE1-DF3516990B93");
-    private static readonly Guid MajorTypeKey = new("48eba18e-f8c9-4687-bf11-0a74c9f96a8f");
     private static readonly Guid SubtypeKey = new("f7e34c9a-42e8-4714-b74b-cb29d72c35e5");
-    private static readonly Guid VideoMajorType = new("73646976-0000-0010-8000-00aa00389b71");
+    private const int FirstVideoStream = unchecked((int)0xFFFFFFFC); // MF_SOURCE_READER_FIRST_VIDEO_STREAM
 
     private readonly SurfaceOptions _options;
     private readonly StructuredLogger _logger;
@@ -80,6 +79,7 @@ public sealed class WallpaperSurface : IDisposable
     private long _framesDecoded;
     private int _hardwareCheckAttempt;
     private bool _hardwareCheckRunning;
+    private bool _codecChecked;
     private bool _hardwareVerified;
 
     /// <summary>The Media Engine exists. False after a sustained suspension has released it.</summary>
@@ -227,7 +227,9 @@ public sealed class WallpaperSurface : IDisposable
 
             Resume();
             WaitForNextFrameTime();
-            if (_media!.OnVideoStreamTick(out _))
+            // S_OK means a new frame. S_FALSE means none yet, and it still counts as success, so the
+            // binding's bool overload is true either way and would present every frame twice.
+            if (_media!.OnVideoStreamTick_(out _).Code == 0)
             {
                 _framesDecoded++;
                 _counters.FrameDecoded();
@@ -284,6 +286,9 @@ public sealed class WallpaperSurface : IDisposable
             _mediaError = $"The wallpaper file is missing: {_options.MediaPath}";
             return;
         }
+
+        CheckCodecAgainstHardware();
+        if (_failed) return;
 
         _mediaReady = false;
 
@@ -379,7 +384,6 @@ public sealed class WallpaperSurface : IDisposable
         if (_framesDecoded < HardwareCheckAfterFrames * (_hardwareCheckAttempt + 1)) return;
 
         _hardwareCheckRunning = true;
-        CheckCodecAgainstHardware();
 
         var framesBefore = Interlocked.Read(ref _framesDecoded);
         // Sampling blocks for a second, and the render loop must keep going to be measured at all.
@@ -424,10 +428,15 @@ public sealed class WallpaperSurface : IDisposable
         _hardwareCheckRunning = false;
     }
 
-    /// <summary>Catches a codec the GPU plainly lacks. Measuring still covers everything else.</summary>
+    /// <summary>
+    /// Catches a codec the GPU plainly lacks, before any decoder has been created. Measuring while
+    /// playing still covers what this cannot see, such as a profile the hardware cannot handle.
+    /// </summary>
     private void CheckCodecAgainstHardware()
     {
-        if (_hardwareCheckAttempt > 0) return;
+        if (_codecChecked) return;
+        _codecChecked = true;
+
         var codec = ReadVideoCodec();
         _logger.Info(LogSource, "surface.video", new Dictionary<string, object?>
         {
@@ -441,24 +450,22 @@ public sealed class WallpaperSurface : IDisposable
         }
     }
 
+    /// <summary>Reads the file's video format. This only parses the container and decodes nothing.</summary>
     private string? ReadVideoCodec()
     {
         try
         {
-            using var extended = _media!.QueryInterface<IMFMediaEngineEx>();
-            for (var stream = 0; stream < extended.NumberOfStreams; stream++)
-            {
-                var major = extended.GetStreamAttribute(stream, MajorTypeKey);
-                if (major.Value is not Guid majorType || majorType != VideoMajorType) continue;
-                var subtype = extended.GetStreamAttribute(stream, SubtypeKey);
-                return subtype.Value is Guid value ? HardwareDecodeCheck.CodecFromSubtype(value) : null;
-            }
+            using var attributes = MediaFactory.MFCreateAttributes(0);
+            using var reader = MediaFactory.MFCreateSourceReaderFromURL(_options.MediaPath, attributes);
+            using var mediaType = reader.GetNativeMediaType(FirstVideoStream, 0);
+            return HardwareDecodeCheck.CodecFromSubtype(mediaType.GetGUID(SubtypeKey));
         }
         catch (SharpGenException exception)
         {
+            // The Media Engine reports a file it cannot play in its own way, moments from now.
             _logger.Warn(LogSource, "surface.codec-unreadable", new Dictionary<string, object?> { ["message"] = exception.Message });
+            return null;
         }
-        return null;
     }
 
     private void WaitForNextFrameTime()

@@ -136,6 +136,21 @@ public sealed class WallpaperSurfaceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_30_fps_video_is_not_presented_at_the_display_rate()
+    {
+        using var surface = Surface();
+        surface.SetPlaying(true);
+        await WaitForFrames(5);
+        var start = _counters.Snapshot();
+        await Task.Delay(2000, TestContext.Current.CancellationToken);
+        var end = _counters.Snapshot();
+
+        // At 60 Hz, presenting every vblank would give about 120 here. The clip is 30 fps.
+        Assert.InRange(end.FramesPresented - start.FramesPresented, 40, 75);
+        Assert.InRange(end.FramesDecoded - start.FramesDecoded, 40, 75);
+    }
+
+    [Fact]
     public async Task The_frame_rate_limit_is_respected()
     {
         using var surface = Surface(frameRateLimit: 15);

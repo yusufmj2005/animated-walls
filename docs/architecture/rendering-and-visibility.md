@@ -110,7 +110,7 @@ A display that starts out covered creates nothing until it first shows.
 Windows chooses the decoder, and a stream the hardware cannot handle could quietly decode in software. So there are three checks:
 
 1. The device is created on an explicit hardware adapter, so it can never be WARP.
-2. Once playing, the video's codec is compared with the adapter's hardware decode profiles.
+2. Before any decoder is created, the video's codec is read from its container and compared with the adapter's hardware decode profiles.
 3. The GPU's video engine is measured for this process while frames decode. If frames arrive while it stays idle on two attempts, playback stops with `no-hardware-decode`.
 
 If the counters are unavailable, the result is inconclusive and logged, and playback continues, because a machine with performance counters disabled should not lose its wallpaper over that. The software path of the third check has only been unit tested, since this hardware decodes everything it was given.
