@@ -112,11 +112,10 @@ describe('Animated Walls', { concurrency: false }, () => {
     }
   });
 
-  it('labels the marketplace as a placeholder and offers no purchase', async () => {
+  it('keeps the marketplace page empty for now', async () => {
     await nav(page, 'Marketplace');
-    await page.getByTestId('marketplace-notice').waitFor();
-    assert.equal(await page.getByRole('button', { name: /buy|purchase|sign in|log in/i }).count(), 0);
-    assert.match(await page.locator('main').innerText(), /Placeholder/);
+    await page.getByRole('heading', { level: 1, name: 'Marketplace' }).waitFor();
+    assert.equal((await page.locator('main').innerText()).trim(), 'Marketplace');
     await screenshot(page, '02-marketplace');
   });
 
