@@ -88,6 +88,8 @@ public sealed class PlaybackCoordinator(StructuredLogger logger, EngineCounters 
                 ["systemSuspended"] = session.SystemSuspended,
                 ["onBattery"] = session.OnBattery,
                 ["exclusiveFullscreen"] = session.ExclusiveFullscreen,
+                ["sessionDisconnected"] = session.SessionDisconnected,
+                ["screenSaverRunning"] = session.ScreenSaverRunning,
             });
             _session = session;
             Recompute(force: true);
