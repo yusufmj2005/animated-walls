@@ -8,7 +8,7 @@ import { SettingsRepository } from './database/settingsRepository';
 import { WallpaperRepository } from './database/wallpaperRepository';
 import { EngineSupervisor } from './engine/engineSupervisor';
 import { Logger } from './logging/logger';
-import { APP_ORIGIN, registerAppProtocol, registerMediaProtocol, registerSchemes } from './protocols';
+import { APP_HOST, APP_ORIGIN, APP_SCHEME, registerAppProtocol, registerMediaProtocol, registerSchemes } from './protocols';
 import { AppTray } from './tray';
 import { IMPORTABLE_EXTENSIONS, WallpaperLibrary } from './wallpapers/wallpaperLibrary';
 
@@ -34,7 +34,8 @@ function isTrustedUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (DEV_SERVER_URL && !app.isPackaged && parsed.origin === new URL(DEV_SERVER_URL).origin) return true;
-    return parsed.origin === APP_ORIGIN;
+    // Not parsed.origin: for a custom scheme the URL standard gives the opaque origin "null".
+    return parsed.protocol === `${APP_SCHEME}:` && parsed.host === APP_HOST;
   } catch {
     return false;
   }
@@ -322,6 +323,7 @@ async function bootstrap(): Promise<void> {
       },
       quit: () => app.quit(),
     });
+    logger.info(LOG_SOURCE, 'tray.created');
   } else {
     logger.error(LOG_SOURCE, 'tray.icon-missing', { path: trayIcon });
   }

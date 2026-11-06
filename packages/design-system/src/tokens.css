@@ -52,6 +52,9 @@
 }
 
 @layer base {
+  html {
+    color-scheme: dark;
+  }
   html, body, #root {
     height: 100%;
   }

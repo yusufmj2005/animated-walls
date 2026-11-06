@@ -158,7 +158,7 @@ describe('Animated Walls', { concurrency: false }, () => {
     assert.deepEqual(response, { status: 206, range: `bytes 0-99/${size}`, type: 'video/webm', length: 100 });
 
     // The video element must actually decode it inside the CSP-locked renderer.
-    await page.getByTestId('wallpaper-card').filter({ hasText: 'sample' }).click();
+    await page.getByTestId('wallpaper-card').filter({ hasText: /^sample/i }).click();
     const played = await page.getByTestId('details-panel').locator('video').evaluate(
       (element) => new Promise((resolve) => {
         if (element.readyState >= 2 && element.videoWidth > 0) return resolve({ width: element.videoWidth });
@@ -252,6 +252,47 @@ describe('Animated Walls', { concurrency: false }, () => {
 
     await page.getByRole('switch', { name: 'Pause all wallpapers' }).click();
     await page.waitForFunction(async () => (await window.animatedWalls.settings.get()).pausePlayback === false);
+  });
+
+  it('reacts to a real window from another process, and goes quiet afterwards', async () => {
+    const diagnose = () => page.evaluate(() => window.animatedWalls.engine.getDiagnostics());
+    const primaryOf = (diagnostics) => {
+      const display = diagnostics.state.displays.find((item) => item.isPrimary);
+      return { display, visibility: diagnostics.state.visibility.find((item) => item.displayId === display.id) };
+    };
+
+    const before = await diagnose();
+    const { display, visibility: initial } = primaryOf(before);
+
+    // This covers the primary display from the Electron process, which the engine's
+    // hooks must see because it is not the engine's own process. It takes no focus.
+    await app.evaluate(({ BrowserWindow }, bounds) => {
+      const cover = new BrowserWindow({ ...bounds, frame: false, show: false, focusable: false, skipTaskbar: true, alwaysOnTop: true, backgroundColor: '#101218', hasShadow: false, resizable: false });
+      globalThis.__cover = cover;
+      cover.showInactive();
+      cover.setBounds(bounds);
+    }, { x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height });
+
+    let covered;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      covered = await diagnose();
+      if (primaryOf(covered).visibility.state === 'covered' && covered.health.counters.visibilityEvaluations > before.health.counters.visibilityEvaluations) break;
+    }
+    assert.equal(primaryOf(covered).visibility.state, 'covered');
+    assert.ok(covered.health.counters.winEventsReceived > before.health.counters.winEventsReceived, 'the WinEvent hooks saw nothing');
+    assert.ok(covered.health.counters.visibilityEvaluations > before.health.counters.visibilityEvaluations, 'no evaluation followed the window appearing');
+
+    await app.evaluate(() => globalThis.__cover.destroy());
+
+    let restored;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      restored = await diagnose();
+      if (restored.health.counters.visibilityEvaluations > covered.health.counters.visibilityEvaluations && primaryOf(restored).visibility.visibleFraction === initial.visibleFraction) break;
+    }
+    assert.ok(restored.health.counters.visibilityEvaluations > covered.health.counters.visibilityEvaluations, 'no evaluation followed the window closing');
+    assert.equal(primaryOf(restored).visibility.state, initial.state);
+    assert.equal(primaryOf(restored).visibility.visibleFraction, initial.visibleFraction);
+    console.log(`  visibility: ${initial.state} -> covered -> ${primaryOf(restored).visibility.state}; evaluations ${before.health.counters.visibilityEvaluations} -> ${restored.health.counters.visibilityEvaluations}`);
   });
 
   describe('security', () => {
@@ -367,7 +408,7 @@ describe('Animated Walls', { concurrency: false }, () => {
   it('wrote structured logs for the required lifecycle events', () => {
     const app = logEvents('app.log').map((line) => line.event);
     const engine = logEvents('engine.log').map((line) => line.event);
-    for (const event of ['app.start', 'database.ready', 'engine.spawned', 'ipc.connected', 'app.shutdown', 'engine.exited', 'import.done', 'import.rejected', 'settings.changed']) {
+    for (const event of ['app.start', 'database.ready', 'engine.spawned', 'ipc.connected', 'app.shutdown', 'engine.exited', 'import.done', 'import.rejected', 'settings.changed', 'tray.created']) {
       assert.ok(app.includes(event), `app.log is missing ${event}`);
     }
     for (const event of ['engine.start', 'engine.exit', 'gpu.detected', 'render.transition', 'visibility.changed', 'client.authenticated', 'playback.configured']) {

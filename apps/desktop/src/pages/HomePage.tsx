@@ -4,7 +4,7 @@ import { WallpaperArt } from '../components/WallpaperArt';
 import { WallpaperCard } from '../components/WallpaperCard';
 import { useImport } from '../hooks/useImport';
 import type { PageId } from '../layouts/AppLayout';
-import { REASON_LABELS, formatBytes, formatDuration } from '../services/format';
+import { REASON_LABELS, formatBytes } from '../services/format';
 import { assignmentsStore, engineStateStore, engineStatusStore, gpuStore, wallpapersStore } from '../stores/appStores';
 import { useStore } from '../stores/createStore';
 
@@ -99,12 +99,13 @@ export function HomePage({ onNavigate }: { onNavigate: (page: PageId) => void })
             <KeyValue label="Decision">{primaryRender ? <DecisionBadge decision={primaryRender.decision} rendererImplemented={rendererImplemented} /> : '—'}</KeyValue>
             <KeyValue label="Reason">{primaryRender ? REASON_LABELS[primaryRender.reason] : '—'}</KeyValue>
             <KeyValue label="Memory">{status.health ? formatBytes(status.health.workingSetBytes) : '—'}</KeyValue>
-            <KeyValue label="Uptime">{status.health ? formatDuration(status.health.uptimeMs) : '—'}</KeyValue>
           </dl>
           {status.lastError && <p className="mt-3 text-[13px] text-bad">{status.lastError}</p>}
           {!rendererImplemented && (
-            <div className="mt-auto rounded-control bg-warn-soft px-3 py-2.5 text-[12.5px] text-warn" data-testid="renderer-pending">
-              The wallpaper renderer arrives in the next milestone. Assignments and suspend decisions work today, but nothing is drawn to your desktop yet.
+            <div className="mt-auto pt-3">
+              <div className="rounded-control bg-warn-soft px-3 py-2.5 text-[12.5px] text-warn" data-testid="renderer-pending">
+                The wallpaper renderer arrives in the next milestone. Assignments and suspend decisions work today, but nothing is drawn to your desktop yet.
+              </div>
             </div>
           )}
         </Card>

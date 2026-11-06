@@ -10,7 +10,8 @@ import { parseRange } from './mediaRange';
 import { MEDIA_SCHEME, type MediaAsset, type WallpaperLibrary } from './wallpapers/wallpaperLibrary';
 
 export const APP_SCHEME = 'app';
-export const APP_ORIGIN = `${APP_SCHEME}://ui`;
+export const APP_HOST = 'ui';
+export const APP_ORIGIN = `${APP_SCHEME}://${APP_HOST}`;
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'none'",
@@ -53,7 +54,7 @@ export function registerAppProtocol(rendererRoot: string, logger: Logger): void 
 
   protocol.handle(APP_SCHEME, async (request) => {
     const url = new URL(request.url);
-    if (url.host !== 'ui') return new Response('Not found', { status: 404 });
+    if (url.host !== APP_HOST) return new Response('Not found', { status: 404 });
 
     const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
     const path = resolve(join(root, relative));

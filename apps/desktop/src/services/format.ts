@@ -12,14 +12,6 @@ export function formatBytes(bytes: number): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
 
-export function formatDuration(ms: number): string {
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
 export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }

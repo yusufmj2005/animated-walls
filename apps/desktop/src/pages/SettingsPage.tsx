@@ -3,7 +3,7 @@ import { Badge, Button, Card, FolderIcon, KeyValue, PageHeader, PulseIcon, Refre
 import { FRAME_RATE_OPTIONS, type AppInfo, type EngineDiagnostics, type GpuAdapter, type LogLevel } from '@animated-walls/shared-types';
 import { EngineConnectionBadge } from '../components/EngineSummary';
 import { api } from '../services/api';
-import { formatBytes, formatDuration } from '../services/format';
+import { formatBytes } from '../services/format';
 import { changeSetting, engineStatusStore, gpuStore, reportFailure, settingsStore } from '../stores/appStores';
 import { useStore } from '../stores/createStore';
 
@@ -145,7 +145,7 @@ export function SettingsPage() {
       <Section title="Diagnostics" description="For understanding what the engine is doing, and for support.">
         <Row
           title="Engine"
-          hint={status.health ? `Process ${status.health.pid} · up ${formatDuration(status.health.uptimeMs)} · ${formatBytes(status.health.workingSetBytes)}` : (status.lastError ?? undefined)}
+          hint={status.health ? `Process ${status.health.pid} · ${formatBytes(status.health.workingSetBytes)}` : (status.lastError ?? undefined)}
           control={
             <div className="flex items-center gap-2">
               <EngineConnectionBadge connection={status.connection} />
