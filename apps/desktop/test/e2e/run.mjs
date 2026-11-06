@@ -408,12 +408,17 @@ describe('Animated Walls', { concurrency: false }, () => {
   it('wrote structured logs for the required lifecycle events', () => {
     const app = logEvents('app.log').map((line) => line.event);
     const engine = logEvents('engine.log').map((line) => line.event);
-    for (const event of ['app.start', 'database.ready', 'engine.spawned', 'ipc.connected', 'app.shutdown', 'engine.exited', 'import.done', 'import.rejected', 'settings.changed', 'tray.created']) {
+    for (const event of ['app.start', 'database.ready', 'engine.spawned', 'ipc.connected', 'app.shutdown', 'engine.exited', 'import.done', 'import.rejected', 'settings.changed', 'tray.created', 'ui.gpu-status']) {
       assert.ok(app.includes(event), `app.log is missing ${event}`);
     }
     for (const event of ['engine.start', 'engine.exit', 'gpu.detected', 'render.transition', 'visibility.changed', 'client.authenticated', 'playback.configured']) {
       assert.ok(engine.includes(event), `engine.log is missing ${event}`);
     }
+  });
+
+  it('reports the UI composited on hardware, once Chromium knows', () => {
+    const status = logEvents('app.log').find((line) => line.event === 'ui.gpu-status');
+    assert.equal(status.data.compositing, 'enabled');
   });
 
   it('never logged the session token', () => {

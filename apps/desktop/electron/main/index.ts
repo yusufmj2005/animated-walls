@@ -150,7 +150,17 @@ async function bootstrap(): Promise<void> {
     chrome: process.versions.chrome,
     node: process.versions.node,
     packaged: app.isPackaged,
-    gpuFeatures: app.getGPUFeatureStatus() as unknown as Record<string, string>,
+  });
+
+  // Read only after this event. Before the GPU process reports in, getGPUFeatureStatus says
+  // "disabled_software" for everything, even on a fully working GPU.
+  app.once('gpu-info-update', () => {
+    const features = app.getGPUFeatureStatus();
+    const hardware = features.gpu_compositing === 'enabled';
+    logger[hardware ? 'info' : 'warn'](LOG_SOURCE, 'ui.gpu-status', { compositing: features.gpu_compositing, videoDecode: features.video_decode, webgl: features.webgl });
+  });
+  app.on('child-process-gone', (_event, details) => {
+    if (details.type === 'GPU') logger.error(LOG_SOURCE, 'ui.gpu-process-gone', { reason: details.reason, exitCode: details.exitCode });
   });
 
   // No page in this app needs a browser permission, so all are refused.
