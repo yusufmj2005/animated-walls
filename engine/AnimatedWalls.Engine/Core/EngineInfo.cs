@@ -2,7 +2,7 @@ namespace AnimatedWalls.Engine.Core;
 
 public static class EngineInfo
 {
-    public const string Version = "0.1.0";
+    public const string Version = "1.0.0";
 
     /// <summary>Must match ENGINE_PROTOCOL_VERSION in packages/shared-types/src/engine.ts.</summary>
     public const int ProtocolVersion = 1;
