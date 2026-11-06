@@ -237,6 +237,13 @@ internal static unsafe partial class User32
     [LibraryImport(Dll)] public static partial int QueryDisplayConfig(uint flags, ref uint pathCount, DisplayConfigPathInfo* paths, ref uint modeCount, DisplayConfigModeInfo* modes, nint topology);
     [LibraryImport(Dll)] public static partial int DisplayConfigGetDeviceInfo(void* packet);
 
+    public const uint INFINITE = 0xFFFFFFFF;
+    public const uint QS_ALLINPUT = 0x04FF;
+    public const uint MWMO_INPUTAVAILABLE = 0x0004;
+
+    [LibraryImport(Dll)]
+    public static partial uint MsgWaitForMultipleObjectsEx(uint count, in nint handle, uint timeoutMs, uint wakeMask, uint flags);
+
     public const uint SPI_GETSCREENSAVERRUNNING = 0x0072;
 
     [LibraryImport(Dll, EntryPoint = "SystemParametersInfoW")] [return: MarshalAs(UnmanagedType.Bool)]
@@ -326,6 +333,17 @@ internal static partial class Kernel32
     [LibraryImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool AttachConsole(int processId);
     [LibraryImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool GetSystemPowerStatus(out SystemPowerStatus status);
     [LibraryImport("kernel32.dll", EntryPoint = "GetModuleHandleW", StringMarshalling = StringMarshalling.Utf16)] public static partial nint GetModuleHandle(string? name);
+}
+
+internal static partial class Ole32
+{
+    public const uint CLSCTX_INPROC_SERVER = 1;
+
+    [LibraryImport("ole32.dll")]
+    private static partial int CoCreateInstance(in Guid clsid, nint outer, uint context, in Guid iid, out nint instance);
+
+    public static SharpGen.Runtime.Result CoCreateInstance(Guid clsid, int outer, uint context, Guid iid, out nint instance) =>
+        CoCreateInstance(in clsid, outer, context, in iid, out instance);
 }
 
 internal static unsafe partial class Pdh

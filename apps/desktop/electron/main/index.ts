@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { BrowserWindow, app, dialog, nativeImage, session, shell } from 'electron';
-import { IPC, type AppInfo, type AppSettings } from '@animated-walls/shared-types';
+import { IPC, type AppInfo, type AppSettings, type DisplayAssignment } from '@animated-walls/shared-types';
 import { registerIpcHandlers } from '../ipc/register';
 import { openDatabase } from './database/database';
 import { SettingsRepository } from './database/settingsRepository';
@@ -239,6 +239,13 @@ async function bootstrap(): Promise<void> {
   const initialSettings = settingsRepository.getAll();
   logger.setLevel(initialSettings.logLevel);
 
+  /** Assignments with the files behind them, as the engine needs them. */
+  const engineAssignments = (): DisplayAssignment[] =>
+    wallpaperRepository.listAssignments().flatMap(({ displayId, wallpaperId }) => {
+      const source = library.playbackSource(wallpaperId);
+      return source ? [{ displayId, wallpaperId, ...source }] : [];
+    });
+
   const pushPlayback = async (engine: EngineSupervisor): Promise<void> => {
     const current = settingsRepository.getAll();
     await engine.call('diagnostics.setLogLevel', { level: current.logLevel });
@@ -248,9 +255,7 @@ async function bootstrap(): Promise<void> {
       pauseOnBattery: current.pauseOnBattery,
     });
     await engine.call('playback.setPaused', { paused: current.pausePlayback });
-    await engine.call('playback.setAssignments', {
-      assignments: wallpaperRepository.listAssignments().map(({ displayId, wallpaperId }) => ({ displayId, wallpaperId })),
-    });
+    await engine.call('playback.setAssignments', { assignments: engineAssignments() });
   };
 
   const engine = new EngineSupervisor({
@@ -320,7 +325,7 @@ async function bootstrap(): Promise<void> {
 
   const syncAssignments = async (): Promise<ReturnType<WallpaperRepository['listAssignments']>> => {
     const assignments = wallpaperRepository.listAssignments();
-    await tellEngine('assignments', () => engine.call('playback.setAssignments', { assignments: assignments.map(({ displayId, wallpaperId }) => ({ displayId, wallpaperId })) }));
+    await tellEngine('assignments', () => engine.call('playback.setAssignments', { assignments: engineAssignments() }));
     return assignments;
   };
 

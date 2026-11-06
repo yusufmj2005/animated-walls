@@ -66,6 +66,13 @@ public sealed class EngineHost
         using var pump = new DesktopSignalPump(_logger, _counters);
         var monitor = new VisibilityMonitor(pump, coordinator, _counters, _logger);
         monitor.Subscribe();
+
+        using var renderer = new WallpaperRenderer(coordinator, _counters, _logger, () => _gpu!);
+        pump.ExplorerRestarted += () =>
+        {
+            // Explorer took the wallpaper windows with it. Give its new desktop a moment to exist.
+            _ = Task.Delay(TimeSpan.FromSeconds(1)).ContinueWith(_ => renderer.RebuildSurfaces(), TaskScheduler.Default);
+        };
         // A driver update, a new GPU and Remote Desktop all change what hardware is usable, and
         // each of them either changes the displays or reconnects the session.
         pump.DisplaysDirty += () => RedetectGpu(coordinator);
@@ -90,6 +97,7 @@ public sealed class EngineHost
 
         // Evaluate only after the listener exists, so the first state has somewhere to go.
         monitor.Start();
+        renderer.Start();
 
         // The supervisor waits for this line before connecting.
         Console.Out.WriteLine(JsonSerializer.Serialize(new ReadyMessage("engine.ready", _pipeName, Environment.ProcessId), ProtocolJson.Default.ReadyMessage));

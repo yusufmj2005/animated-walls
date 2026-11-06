@@ -14,7 +14,8 @@ public sealed class PlaybackCoordinator(StructuredLogger logger, EngineCounters 
     private const double SignificantFractionChange = 0.05;
 
     private readonly object _gate = new();
-    private readonly Dictionary<string, string> _assignments = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DisplayAssignment> _assignments = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _failures = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DisplayRenderState> _renderStates = new(StringComparer.Ordinal);
     private IReadOnlyList<DisplayInfo> _displays = [];
     private IReadOnlyList<DisplayVisibility> _visibility = [];
@@ -35,12 +36,43 @@ public sealed class PlaybackCoordinator(StructuredLogger logger, EngineCounters 
         }
     }
 
+    public PlaybackConfig Config
+    {
+        get
+        {
+            lock (_gate) return _config;
+        }
+    }
+
+    public DisplayAssignment? AssignmentFor(string displayId)
+    {
+        lock (_gate) return _assignments.GetValueOrDefault(displayId);
+    }
+
+    /// <summary>A display could not play its wallpaper. It stays blocked until something changes.</summary>
+    public void ReportFailure(string displayId, string reason, string message)
+    {
+        lock (_gate)
+        {
+            _failures[displayId] = reason;
+            logger.Error(LogSource, "playback.failed", new Dictionary<string, object?>
+            {
+                ["displayId"] = displayId,
+                ["reason"] = reason,
+                ["message"] = message,
+            });
+            Recompute(force: true);
+        }
+    }
+
     public void UpdateDisplays(IReadOnlyList<DisplayInfo> displays)
     {
         lock (_gate)
         {
             if (!displays.SequenceEqual(_displays))
             {
+                // A new layout may be what a failed display needed, so it gets another try.
+                _failures.Clear();
                 logger.Info(LogSource, "displays.changed", new Dictionary<string, object?>
                 {
                     ["count"] = displays.Count,
@@ -102,6 +134,7 @@ public sealed class PlaybackCoordinator(StructuredLogger logger, EngineCounters 
         lock (_gate)
         {
             _gpu = gpu;
+            _failures.Clear();
             Recompute(force: true);
         }
     }
@@ -111,7 +144,9 @@ public sealed class PlaybackCoordinator(StructuredLogger logger, EngineCounters 
         lock (_gate)
         {
             _assignments.Clear();
-            foreach (var assignment in assignments) _assignments[assignment.DisplayId] = assignment.WallpaperId;
+            foreach (var assignment in assignments) _assignments[assignment.DisplayId] = assignment;
+            // Failures belong to what was assigned before.
+            _failures.Clear();
             Recompute(force: true);
             return _current!;
         }
@@ -176,7 +211,9 @@ public sealed class PlaybackCoordinator(StructuredLogger logger, EngineCounters 
         var render = new List<DisplayRenderState>(_displays.Count);
         foreach (var display in _displays)
         {
-            _assignments.TryGetValue(display.Id, out var wallpaperId);
+            _assignments.TryGetValue(display.Id, out var assignment);
+            var wallpaperId = assignment?.WallpaperId;
+            _failures.TryGetValue(display.Id, out var failure);
             var visibility = _visibility.FirstOrDefault(item => item.DisplayId == display.Id)?.State ?? VisibilityStates.Visible;
 
             var (decision, reason) = RenderPolicy.Decide(new RenderPolicy.Inputs(
@@ -186,7 +223,9 @@ public sealed class PlaybackCoordinator(StructuredLogger logger, EngineCounters 
                 _session.ExclusiveFullscreen && string.Equals(_session.ExclusiveDeviceName, display.DeviceName, StringComparison.OrdinalIgnoreCase),
                 _gpu.IsSupported,
                 _paused,
-                _config.PauseOnBattery));
+                _config.PauseOnBattery,
+                assignment?.MediaType is null or DisplayAssignment.VideoType,
+                failure));
 
             _renderStates.TryGetValue(display.Id, out var previous);
             DisplayRenderState state;

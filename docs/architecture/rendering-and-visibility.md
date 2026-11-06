@@ -92,12 +92,35 @@ Tested against a real session on Windows 11 build 26300:
 | 12 | Partly visible | render | `partially-visible` |
 | 13 | Otherwise | render | `desktop-visible` |
 
-While `EngineInfo.RendererImplemented` is false, a `render` decision means only that frames would be drawn. The UI labels it "Would render".
+## The video renderer
 
-## For the renderer milestone
+`WallpaperRenderer` makes the desktop match the coordinator's decisions, with one `WallpaperSurface` per display. Each surface has its own thread, host window, Direct3D 11 device, flip-model swap chain and Media Engine.
 
-- **On suspend:** stop presenting and stop the decode loop, keep decoder and swap chain alive, and hold the current frame. Add a timer that releases decoders and video memory after a sustained suspension, such as 30 seconds.
-- **On resume:** seek-free continue if resources are still held, otherwise re-create them and resume from the saved position.
+| State | Presenting | Decoding | Resources |
+|---|---|---|---|
+| Playing | Each new frame, up to the frame rate limit | Yes | All held |
+| Suspended | No | No, the Media Engine is paused | The last frame stays on screen, and the thread sleeps until woken |
+| Suspended for 30 seconds | No | No | The decoder is released. It is recreated at the same position on resume |
+| Idle or blocked | No | No | The surface is removed, and the normal Windows wallpaper returns |
+
+A display that starts out covered creates nothing until it first shows.
+
+### How GPU-only is enforced for video
+
+Windows chooses the decoder, and a stream the hardware cannot handle could quietly decode in software. So there are three checks:
+
+1. The device is created on an explicit hardware adapter, so it can never be WARP.
+2. Once playing, the video's codec is compared with the adapter's hardware decode profiles.
+3. The GPU's video engine is measured for this process while frames decode. If frames arrive while it stays idle on two attempts, playback stops with `no-hardware-decode`.
+
+If the counters are unavailable, the result is inconclusive and logged, and playback continues, because a machine with performance counters disabled should not lose its wallpaper over that. The software path of the third check has only been unit tested, since this hardware decodes everything it was given.
+
+### Frame pacing
+
+The loop waits on `IDXGIOutput::WaitForVBlank`, then asks the Media Engine whether a new frame is due. A frame is presented only if there is a new one and the limit allows it, so a 30 fps video on a 60 Hz display presents 30 times a second.
+
+## Still to build
+
 - **Web wallpapers:** WebView2 `TrySuspendAsync` when suspended. It needs testing to confirm rendering really stops, since suspension behaviour depends on the WebView being hidden first.
-- **Frame pacing:** `frameRateLimit` is already stored and delivered to the engine, but nothing consumes it yet.
-- **Media Foundation:** use `IMFSourceReader` with a DXGI device manager for zero-copy decode. If a stream has no hardware decode path, report it and do not play it, per the GPU policy.
+- **Image wallpapers:** a single present and nothing further.
+- **Partial visibility:** every partly visible display currently draws in full. Fractions and rectangles are already reported.

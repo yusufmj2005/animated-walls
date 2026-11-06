@@ -18,8 +18,10 @@ public class RenderPolicyTests
         bool gpu = true,
         bool paused = false,
         bool pauseOnBattery = true,
-        bool exclusive = false) =>
-        RenderPolicy.Decide(new RenderPolicy.Inputs(wallpaper, visibility, session ?? Normal, exclusive, gpu, paused, pauseOnBattery));
+        bool exclusive = false,
+        bool typeSupported = true,
+        string? failure = null) =>
+        RenderPolicy.Decide(new RenderPolicy.Inputs(wallpaper, visibility, session ?? Normal, exclusive, gpu, paused, pauseOnBattery, typeSupported, failure));
 
     [Fact]
     public void Desktop_visible_renders() =>
@@ -82,6 +84,18 @@ public class RenderPolicyTests
         Assert.Equal((RenderDecisions.Idle, RenderReasons.NoWallpaperAssigned), Decide(wallpaper: null));
 
     [Fact]
+    public void A_type_with_no_renderer_is_blocked_with_its_own_reason() =>
+        Assert.Equal((RenderDecisions.Blocked, RenderReasons.UnsupportedWallpaperType), Decide(typeSupported: false));
+
+    [Fact]
+    public void A_failed_display_is_blocked_with_the_failure_as_its_reason() =>
+        Assert.Equal((RenderDecisions.Blocked, RenderReasons.NoHardwareDecode), Decide(failure: RenderReasons.NoHardwareDecode));
+
+    [Fact]
+    public void A_failed_display_being_locked_still_says_locked() =>
+        Assert.Equal(RenderReasons.SessionLocked, Decide(session: Normal with { Locked = true }, failure: RenderReasons.PlaybackFailed).Reason);
+
+    [Fact]
     public void User_pause_suspends() =>
         Assert.Equal((RenderDecisions.Suspended, RenderReasons.UserPaused), Decide(paused: true));
 
@@ -92,6 +106,36 @@ public class RenderPolicyTests
     [Fact]
     public void Battery_renders_when_the_setting_is_off() =>
         Assert.Equal(RenderDecisions.Render, Decide(session: Normal with { OnBattery = true }, pauseOnBattery: false).Decision);
+}
+
+public class HardwareDecodeCheckTests
+{
+    private static GpuProcessUsage Usage(double decode, bool available = true) => new(available, 1, decode, null);
+
+    [Fact]
+    public void A_busy_video_engine_means_hardware() =>
+        Assert.Equal(HardwareDecodeCheck.Outcome.Hardware, HardwareDecodeCheck.Evaluate(Usage(3.2), 60));
+
+    [Fact]
+    public void Frames_with_an_idle_video_engine_means_software() =>
+        Assert.Equal(HardwareDecodeCheck.Outcome.SoftwareSuspected, HardwareDecodeCheck.Evaluate(Usage(0), 60));
+
+    [Fact]
+    public void Too_few_frames_says_nothing() =>
+        Assert.Equal(HardwareDecodeCheck.Outcome.Inconclusive, HardwareDecodeCheck.Evaluate(Usage(0), 2));
+
+    [Fact]
+    public void Unavailable_counters_never_stop_playback() =>
+        Assert.Equal(HardwareDecodeCheck.Outcome.Inconclusive, HardwareDecodeCheck.Evaluate(Usage(0, available: false), 60));
+
+    [Theory]
+    [InlineData("34363248-0000-0010-8000-00aa00389b71", "h264")]
+    [InlineData("43564548-0000-0010-8000-00aa00389b71", "hevc")]
+    [InlineData("30395056-0000-0010-8000-00aa00389b71", "vp9")]
+    [InlineData("31305641-0000-0010-8000-00aa00389b71", "av1")]
+    [InlineData("3231564e-0000-0010-8000-00aa00389b71", null)]
+    public void Codecs_are_read_from_media_subtypes(string subtype, string? expected) =>
+        Assert.Equal(expected, HardwareDecodeCheck.CodecFromSubtype(new Guid(subtype)));
 }
 
 public class GpuPolicyTests
@@ -234,6 +278,27 @@ public class PlaybackCoordinatorTests
     {
         var (coordinator, _, _) = Create(Unsupported);
         Assert.Equal(RenderDecisions.Blocked, coordinator.Current.Render[0].Decision);
+    }
+
+    [Fact]
+    public void A_failure_blocks_until_the_assignment_changes()
+    {
+        var (coordinator, _, _) = Create();
+        coordinator.UpdateVisibility([Vis(VisibilityStates.Visible, 1)]);
+        coordinator.ReportFailure("d1", RenderReasons.PlaybackFailed, "bad file");
+        Assert.Equal((RenderDecisions.Blocked, RenderReasons.PlaybackFailed), (coordinator.Current.Render[0].Decision, coordinator.Current.Render[0].Reason));
+
+        coordinator.SetAssignments([new DisplayAssignment("d1", "w2", @"C:\other.mp4")]);
+        Assert.Equal(RenderDecisions.Render, coordinator.Current.Render[0].Decision);
+    }
+
+    [Fact]
+    public void A_web_wallpaper_is_blocked_until_it_has_a_renderer()
+    {
+        var (coordinator, _, _) = Create();
+        coordinator.SetAssignments([new DisplayAssignment("d1", "w1", null, "web")]);
+        coordinator.UpdateVisibility([Vis(VisibilityStates.Visible, 1)]);
+        Assert.Equal(RenderReasons.UnsupportedWallpaperType, coordinator.Current.Render[0].Reason);
     }
 
     [Fact]

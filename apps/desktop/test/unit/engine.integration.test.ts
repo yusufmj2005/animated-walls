@@ -82,7 +82,7 @@ describe.skipIf(!enginePath)('engine over named pipe', () => {
 
       const health = await supervisor.call('engine.health');
       expect(health.protocolVersion).toBe(1);
-      expect(health.rendererImplemented).toBe(false);
+      expect(health.rendererImplemented).toBe(true);
       expect(health.counters.framesPresented).toBe(0);
 
       const state = await supervisor.call('engine.state');
@@ -106,7 +106,8 @@ describe.skipIf(!enginePath)('engine over named pipe', () => {
       const events: EngineState[] = [];
       supervisor.on('state', (next) => events.push(next));
 
-      const assigned = await supervisor.call('playback.setAssignments', { assignments: [{ displayId, wallpaperId: 'w1' }] });
+      // Web has no renderer yet, so this exercises decisions without drawing on the developer's desktop.
+      const assigned = await supervisor.call('playback.setAssignments', { assignments: [{ displayId, wallpaperId: 'w1', mediaPath: null, mediaType: 'web' }] });
       expect(assigned.render[0]!.wallpaperId).toBe('w1');
       expect(assigned.render[0]!.decision).not.toBe('idle');
 

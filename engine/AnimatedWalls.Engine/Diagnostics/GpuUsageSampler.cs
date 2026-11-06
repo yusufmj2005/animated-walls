@@ -85,7 +85,9 @@ public static unsafe class GpuUsageSampler
                 var name = new string(items[index].Name);
                 var value = items[index].Value;
                 if (name.EndsWith("engtype_3D", StringComparison.OrdinalIgnoreCase)) engine3D += value;
-                else if (name.EndsWith("engtype_VideoDecode", StringComparison.OrdinalIgnoreCase)) decode += value;
+                // NVIDIA and Intel call it VideoDecode, while AMD's shared block is VideoCodec.
+                else if (name.EndsWith("engtype_VideoDecode", StringComparison.OrdinalIgnoreCase)
+                    || name.EndsWith("engtype_VideoCodec", StringComparison.OrdinalIgnoreCase)) decode += value;
             }
             return new GpuProcessUsage(true, Math.Round(engine3D, 2), Math.Round(decode, 2), null);
         }

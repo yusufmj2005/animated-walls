@@ -76,10 +76,12 @@ The fallback variant, a layered window with a blit-model swap chain, is implemen
 | `IDesktopWallpaper` with rapidly changing images | Documented, but slideshow-based, with no GPU path and heavy disk use |
 | DirectComposition visual into Progman | Worth evaluating. Progman on this layout is already composition-based, but this needs more undocumented behaviour than a child window does |
 
-## Requirements for the renderer
+## How the renderer uses this
 
-- Handle `TaskbarCreated` by re-locating the host and re-parenting.
-- Re-check placement on `WM_DISPLAYCHANGE`. The parent's origin is the virtual screen's top-left, so coordinates change when monitors do.
-- Create one host window per display, each with its own swap chain, so displays suspend independently.
-- Restore on exit. Destroying the window was enough in this test, because the wallpaper reappeared without any settings call. The classic layout may behave differently, since a `WorkerW` can retain its last frame.
-- Never call `SPI_SETDESKWALLPAPER` with persistence flags, as that would change the user's own wallpaper setting.
+- `TaskbarCreated` rebuilds every surface after a short delay, since Explorer takes the wallpaper windows with it. Written, not yet exercised.
+- A change of display geometry rebuilds that display's surface. Written, not yet exercised.
+- Each display has its own host window and swap chain, so displays suspend independently.
+- The host window's thread keeps pumping messages even while suspended. A child window shares an input queue with its parent, so an unpumped one can hang Explorer.
+- Clicks pass through, as the window answers `HTTRANSPARENT`.
+- Destroying the window is what restores the normal wallpaper, and no settings call is involved. The classic layout may behave differently, since a `WorkerW` can retain its last frame.
+- `SPI_SETDESKWALLPAPER` is never called, so the user's own wallpaper setting is never changed.

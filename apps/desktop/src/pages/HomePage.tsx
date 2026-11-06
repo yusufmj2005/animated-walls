@@ -37,7 +37,6 @@ export function HomePage({ onNavigate }: { onNavigate: (page: PageId) => void })
     .sort((a, b) => (b.lastUsedAt ?? '').localeCompare(a.lastUsedAt ?? ''))
     .slice(0, 4);
 
-  const rendererImplemented = status.health?.rendererImplemented ?? false;
   const gpuUnsupported = gpu?.status === 'unsupported';
 
   return (
@@ -99,18 +98,11 @@ export function HomePage({ onNavigate }: { onNavigate: (page: PageId) => void })
               <span title={gpu?.selectedAdapter?.name}>{gpu ? (gpu.selectedAdapter?.name ?? 'None supported') : '—'}</span>
             </KeyValue>
             <KeyValue label="Primary display">{primaryVisibility ? <VisibilityBadge state={primaryVisibility.state} fraction={primaryVisibility.visibleFraction} /> : '—'}</KeyValue>
-            <KeyValue label="Decision">{primaryRender ? <DecisionBadge decision={primaryRender.decision} rendererImplemented={rendererImplemented} /> : '—'}</KeyValue>
+            <KeyValue label="Decision">{primaryRender ? <DecisionBadge decision={primaryRender.decision} /> : '—'}</KeyValue>
             <KeyValue label="Reason">{primaryRender ? REASON_LABELS[primaryRender.reason] : '—'}</KeyValue>
             <KeyValue label="Memory">{status.health ? formatBytes(status.health.workingSetBytes) : '—'}</KeyValue>
           </dl>
           {status.lastError && <p className="mt-3 text-[13px] text-bad">{status.lastError}</p>}
-          {!rendererImplemented && (
-            <div className="mt-auto pt-3">
-              <div className="rounded-control bg-warn-soft px-3 py-2.5 text-[12.5px] text-warn" data-testid="renderer-pending">
-                The wallpaper renderer arrives in the next milestone. Assignments and suspend decisions work today, but nothing is drawn to your desktop yet.
-              </div>
-            </div>
-          )}
         </Card>
       </div>
 

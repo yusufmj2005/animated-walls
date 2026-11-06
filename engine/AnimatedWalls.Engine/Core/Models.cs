@@ -95,6 +95,9 @@ public static class RenderReasons
     public const string SystemSuspended = "system-suspended";
     public const string OnBattery = "on-battery";
     public const string UserPaused = "user-paused";
+    public const string UnsupportedWallpaperType = "unsupported-wallpaper-type";
+    public const string PlaybackFailed = "playback-failed";
+    public const string NoHardwareDecode = "no-hardware-decode";
 }
 
 public sealed record DisplayRenderState(
@@ -111,7 +114,11 @@ public sealed record EngineState(
     IReadOnlyList<DisplayRenderState> Render,
     bool Paused);
 
-public sealed record DisplayAssignment(string DisplayId, string WallpaperId);
+/// <summary>What a display should show. Only video has a renderer so far.</summary>
+public sealed record DisplayAssignment(string DisplayId, string WallpaperId, string? MediaPath = null, string MediaType = DisplayAssignment.VideoType)
+{
+    public const string VideoType = "video";
+}
 
 public sealed record PlaybackConfig(int FrameRateLimit, string Quality, bool PauseOnBattery)
 {

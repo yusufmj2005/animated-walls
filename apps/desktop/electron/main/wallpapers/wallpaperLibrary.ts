@@ -300,6 +300,16 @@ export class WallpaperLibrary {
     return { path, kind };
   }
 
+  /**
+   * What the engine needs to play a wallpaper. A web wallpaper's entry point is withheld until
+   * its sandboxed renderer exists, so the engine can never be handed its code by mistake.
+   */
+  playbackSource(id: string): { mediaPath: string | null; mediaType: WallpaperRow['type'] } | null {
+    const row = this.repository.find(id);
+    if (!row) return null;
+    return { mediaPath: row.type === 'video' ? (this.resolveMedia(id, 'entry')?.path ?? null) : null, mediaType: row.type };
+  }
+
   /** Directories named like one of our wallpapers that have no database row. */
   private async findOrphans(): Promise<string[]> {
     const entries = await readdir(this.root, { withFileTypes: true });

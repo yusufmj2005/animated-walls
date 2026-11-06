@@ -75,7 +75,6 @@ export function DisplaysPage() {
 
   const displays = state?.displays ?? [];
   const selected = displays.find((display) => display.id === selectedId) ?? displays[0] ?? null;
-  const rendererImplemented = status.health?.rendererImplemented ?? false;
 
   const assign = async (displayId: string, wallpaperId: string): Promise<void> => {
     try {
@@ -133,7 +132,7 @@ export function DisplaysPage() {
                   {render ? (
                     <span className="inline-flex items-center gap-2">
                       <span className="text-xs text-ink-3">{REASON_LABELS[render.reason]}</span>
-                      <DecisionBadge decision={render.decision} rendererImplemented={rendererImplemented} />
+                      <DecisionBadge decision={render.decision} />
                     </span>
                   ) : (
                     '—'

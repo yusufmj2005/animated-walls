@@ -2,7 +2,7 @@
 
 Premium animated wallpapers for Windows 10 and 11. Wallpapers render on the GPU while they can be seen, and stop rendering when other windows cover them.
 
-**Status: Sprint 01 (foundation).** The desktop app, native engine, wallpaper library, visibility monitoring and GPU detection all work. **The wallpaper renderer does not exist yet**, so nothing is drawn to your desktop other than by the hosting proof of concept. The app says this wherever it matters.
+**Status:** video wallpapers (MP4 and WebM) play behind the desktop icons, decoded on the GPU, and stop completely when covered. Image and web wallpapers import, but cannot play yet. Audio is not implemented.
 
 ## Repository layout
 

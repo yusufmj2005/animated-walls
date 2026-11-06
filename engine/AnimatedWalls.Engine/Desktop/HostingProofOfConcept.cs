@@ -146,7 +146,7 @@ public static unsafe class HostingProofOfConcept
 
         try
         {
-            if (!Attach(window, target, display.Bounds, layered, out var attachError))
+            if (!DesktopHostAttachment.Attach(window, target, display.Bounds, layered, out var attachError))
             {
                 return new VariantResult(variant, true, false, false, false, swapEffect.ToString(), attachError, 0, null, null, "skipped", pixelBefore, null, null);
             }
@@ -212,7 +212,7 @@ public static unsafe class HostingProofOfConcept
             User32.ShowWindow(window, 0);
             User32.DestroyWindow(window);
             window = 0;
-            RepaintDesktop(target);
+            DesktopHostAttachment.RepaintDesktop(target);
             PumpFor(TimeSpan.FromMilliseconds(400));
             var pixelAfter = reader.Read();
 
@@ -234,7 +234,7 @@ public static unsafe class HostingProofOfConcept
             adapter?.Dispose();
             factory?.Dispose();
             if (window != 0) User32.DestroyWindow(window);
-            RepaintDesktop(target);
+            DesktopHostAttachment.RepaintDesktop(target);
         }
     }
 
@@ -278,44 +278,6 @@ public static unsafe class HostingProofOfConcept
     private static nint HostWindowProc(nint hwnd, uint message, nint wParam, nint lParam) =>
         User32.DefWindowProc(hwnd, message, wParam, lParam);
 
-    private static bool Attach(nint window, DesktopHostTarget target, Rect bounds, bool layered, out string? error)
-    {
-        error = null;
-
-        // Becoming a real child must happen before SetParent, or Windows treats the
-        // window as an owned popup and it can float above the icons.
-        var style = (User32.GetWindowLongPtr(window, User32.GWL_STYLE) & ~(nint)unchecked((int)User32.WS_POPUP)) | (nint)User32.WS_CHILD | (nint)User32.WS_CLIPSIBLINGS;
-        User32.SetWindowLongPtr(window, User32.GWL_STYLE, style);
-
-        if (layered)
-        {
-            var exStyle = User32.GetWindowLongPtr(window, User32.GWL_EXSTYLE) | (nint)User32.WS_EX_LAYERED;
-            User32.SetWindowLongPtr(window, User32.GWL_EXSTYLE, exStyle);
-            User32.SetLayeredWindowAttributes(window, 0, 255, User32.LWA_ALPHA);
-        }
-
-        if (User32.SetParent(window, target.Parent) == 0 && Marshal.GetLastPInvokeError() != 0)
-        {
-            error = $"SetParent failed with error {Marshal.GetLastPInvokeError()}.";
-            return false;
-        }
-
-        // Child coordinates are relative to the parent, whose origin is the virtual
-        // screen's top-left, so negative monitor positions need this conversion.
-        var origin = new NativePoint { X = bounds.X, Y = bounds.Y };
-        User32.ScreenToClient(target.Parent, ref origin);
-
-        // In the Progman layout the wallpaper must sit directly under SHELLDLL_DefView.
-        var insertAfter = target.Layout == DesktopLayout.ProgmanChild ? target.DefView : 0;
-        var flags = User32.SWP_NOACTIVATE | User32.SWP_SHOWWINDOW | (insertAfter == 0 ? User32.SWP_NOZORDER : 0);
-        if (!User32.SetWindowPos(window, insertAfter, origin.X, origin.Y, bounds.Width, bounds.Height, flags))
-        {
-            error = $"SetWindowPos failed with error {Marshal.GetLastPInvokeError()}.";
-            return false;
-        }
-        return true;
-    }
-
     /// <summary>GW_HWNDNEXT walk from the icon window: our window must be below it.</summary>
     private static bool IsBelowIcons(nint window, DesktopHostTarget target)
     {
@@ -329,13 +291,6 @@ public static unsafe class HostingProofOfConcept
             if (child == window) return seenDefView;
         }
         return false;
-    }
-
-    private static void RepaintDesktop(DesktopHostTarget target)
-    {
-        const uint flags = User32.RDW_INVALIDATE | User32.RDW_ERASE | User32.RDW_ALLCHILDREN | User32.RDW_UPDATENOW;
-        if (target.Parent != 0) User32.RedrawWindow(target.Parent, 0, 0, flags);
-        if (target.Progman != 0) User32.RedrawWindow(target.Progman, 0, 0, flags);
     }
 
     private static IDXGIAdapter1 FindAdapter(IDXGIFactory2 factory, GpuAdapter info)
@@ -373,7 +328,7 @@ public static unsafe class HostingProofOfConcept
     /// so the check does not have to disturb what the user is doing. It asks DWM to draw a
     /// live thumbnail of Progman into a tiny topmost window, then reads that from the screen.
     /// </summary>
-    private sealed class DesktopPixelReader : IDisposable
+    internal sealed class DesktopPixelReader : IDisposable
     {
         private const int Size = 24;
         private const int Margin = 8;

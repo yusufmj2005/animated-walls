@@ -19,7 +19,7 @@ The product promises that wallpapers stop rendering when covered. GPU percentage
 
 `framesPresented` and `framesDecoded` are monotonic counters in `EngineCounters`, reported by `engine.health`. Sample them, wait, and sample again. **While suspended, both must not change.** This is exact, immune to noise, and cheap enough to always have on.
 
-Both are 0 today because the renderer does not exist. The renderer must increment them at the point of `Present` and at the point a frame is decoded, not anywhere higher up.
+`WallpaperSurface` increments them at the point of `Present` and at the point the Media Engine reports a new frame, not anywhere higher up.
 
 ### 2. Process-scoped GPU engine counters
 
@@ -27,7 +27,7 @@ Both are 0 today because the renderer does not exist. The renderer must incremen
 
 The figures deliberately exclude `dwm.exe` and other processes. The compositor keeps using the GPU while wallpapers are suspended, so a claim of "zero GPU use" system-wide would be false. The claim is that **this process** does no rendering or decoding work.
 
-The proof of concept showed that this sampler separates the two states on real hardware, reading 0.14% while presenting a solid colour at 60 Hz and 0% after stopping. A solid-colour clear is a very light load, so with a real wallpaper this gap will be far larger.
+`WallpaperSurfaceTests` asserts the decode figure is above 0 while playing, and exactly 0 for both 3D and decode while suspended, using real video on real hardware.
 
 Web wallpapers run in WebView2 child processes. When the renderer ships, the sampler must sum over the whole engine process tree or these numbers will under-report.
 
@@ -35,15 +35,19 @@ Web wallpapers run in WebView2 child processes. When the renderer ships, the sam
 
 Each `render.transition` and `visibility.changed` log line records from, to, reason and display, so a field report can be matched against what the user was doing.
 
-## Acceptance test to add with the renderer
+## Acceptance tests
 
-These cannot be automated meaningfully until the renderer exists:
+`npm run test:engine:desktop` runs `WallpaperSurfaceTests`, which control a surface directly so they work whatever windows are open. They draw a test video behind the icons for a few seconds:
 
-1. Assign a wallpaper to a display and uncover the desktop. Confirm that `framesPresented` increases and engine GPU use is above 0.
-2. Cover the display with an opaque window. Within 200 ms the decision must be `suspended`.
-3. Hold for 5 seconds. Assert that the `framesPresented` and `framesDecoded` deltas are exactly 0, and that engine GPU 3D and decode are about 0.
-4. Close the window and assert that the counters resume, with no visible glitch.
-5. Repeat for each row of the behaviour table, on each display independently.
+- Frames present, and the GPU's video engine is busy, while playing.
+- While suspended, the presented and decoded counters do not change at all, and GPU use reads 0%.
+- Frames resume afterwards.
+- The picture on the desktop really changes, and the normal wallpaper returns after stopping.
+- The frame rate limit holds.
+- A long suspension releases the decoder, and resuming recreates it.
+- A missing or corrupt file fails and says why.
+
+`npm run test:e2e` covers the same behaviour through the whole app, using a real covering window.
 
 ## Manual checks still outstanding
 

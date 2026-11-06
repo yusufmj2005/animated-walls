@@ -21,7 +21,9 @@ public static class RenderPolicy
         bool ExclusiveOnThisDisplay,
         bool GpuSupported,
         bool UserPaused,
-        bool PauseOnBattery);
+        bool PauseOnBattery,
+        bool TypeSupported = true,
+        string? FailureReason = null);
 
     public static (string Decision, string Reason) Decide(in Inputs inputs)
     {
@@ -38,6 +40,11 @@ public static class RenderPolicy
         if (inputs.UserPaused) return (RenderDecisions.Suspended, RenderReasons.UserPaused);
         if (inputs.PauseOnBattery && inputs.Session.OnBattery) return (RenderDecisions.Suspended, RenderReasons.OnBattery);
         if (inputs.ExclusiveOnThisDisplay) return (RenderDecisions.Suspended, RenderReasons.ExclusiveFullscreen);
+
+        // Blocked rather than suspended, and after the checks above so the reason shown is the
+        // one that matters first. Neither of these clears by itself.
+        if (!inputs.TypeSupported) return (RenderDecisions.Blocked, RenderReasons.UnsupportedWallpaperType);
+        if (inputs.FailureReason is { } failure) return (RenderDecisions.Blocked, failure);
 
         return inputs.VisibilityState switch
         {

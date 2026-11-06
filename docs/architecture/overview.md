@@ -21,7 +21,7 @@
 └────────────────────────────────────────────────────────────┘
 ```
 
-The engine is a separate process so a native crash cannot take the UI down, and so wallpapers can keep running with almost no overhead while the UI is closed. Later the renderer lives here too. WebView2 wallpaper processes will be children of the engine.
+The engine is a separate process so a native crash cannot take the UI down, and so wallpapers can keep running with almost no overhead while the UI is closed. The renderer lives here too. WebView2 wallpaper processes will be children of the engine.
 
 ## Three kinds of "suspended"
 
@@ -76,9 +76,17 @@ Users do not need .NET installed. Native AOT would give a smaller, faster-starti
 
 Five pages and a small set of stores do not justify the dependencies. `useSyncExternalStore` with a 20-line store is enough for now.
 
+### D9. The Media Engine for video playback
+
+`IMFMediaEngine` in frame-server mode, rather than assembling a source reader and pacing frames by hand. It handles timing, looping and format changes, and pausing it is what stops decoding. Frames go straight into the swap chain's back buffer with `TransferVideoFrame`.
+
+**Trade-off:** Windows chooses the decoder, and the API does not expose which one it picked. So hardware decoding is verified by measurement instead. See [rendering and visibility](rendering-and-visibility.md).
+
 ## Not yet built
 
-- The wallpaper renderer: video decode, swap chains per display, WebView2 hosting.
-- Multi-monitor hosting. The proof of concept covers the primary display only.
+- Image and web wallpapers, including WebView2 hosting.
+- Audio. Video plays muted.
+- Rendering only the visible parts of a partly covered display.
+- Multi-monitor playback is built per display, but has only run on one monitor.
 - Code signing. The installer is unsigned, so SmartScreen will warn. A certificate is required before any commercial release.
 - Marketplace and Creator Portal backends.

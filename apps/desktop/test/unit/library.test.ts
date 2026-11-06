@@ -227,6 +227,19 @@ describe('WallpaperLibrary', () => {
       expect(library.resolveMedia(result.wallpaper.id, 'entry')?.kind).toBe('webm');
     });
 
+    it('gives the engine a video file to play, but never a web wallpaper entry point', async () => {
+      const video = await library.importPath(writeFile('clip.webm', WEBM_BYTES));
+      const web = await library.importPath(await writePackage(validPackageEntries()));
+      if (video.status !== 'imported' || web.status !== 'imported') throw new Error('import failed');
+
+      const source = library.playbackSource(video.wallpaper.id);
+      expect(source?.mediaType).toBe('video');
+      expect(source?.mediaPath).toBe(join(root, video.wallpaper.id, 'media.webm'));
+
+      expect(library.playbackSource(web.wallpaper.id)).toEqual({ mediaPath: null, mediaType: 'web' });
+      expect(library.playbackSource('00000000-0000-0000-0000-000000000000')).toBeNull();
+    });
+
     it('returns nothing for unknown ids', () => {
       expect(library.resolveMedia('00000000-0000-0000-0000-000000000000', 'preview')).toBeNull();
       expect(library.resolveMedia('../../secrets', 'preview')).toBeNull();

@@ -36,14 +36,13 @@ export function VisibilityBadge({ state, fraction }: { state: VisibilityState; f
 }
 
 const DECISION: Record<RenderDecision, { label: string; tone: Tone }> = {
-  render: { label: 'Would render', tone: 'ok' },
+  render: { label: 'Rendering', tone: 'ok' },
   suspended: { label: 'Suspended', tone: 'neutral' },
   blocked: { label: 'Blocked', tone: 'bad' },
   idle: { label: 'Idle', tone: 'neutral' },
 };
 
-/** The word "would" stays until the renderer ships: these are decisions, not frames. */
-export function DecisionBadge({ decision, rendererImplemented }: { decision: RenderDecision; rendererImplemented: boolean }) {
+export function DecisionBadge({ decision }: { decision: RenderDecision }) {
   const { label, tone } = DECISION[decision];
-  return <Badge tone={tone}>{decision === 'render' && rendererImplemented ? 'Rendering' : label}</Badge>;
+  return <Badge tone={tone}>{label}</Badge>;
 }

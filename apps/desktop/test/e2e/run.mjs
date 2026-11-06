@@ -99,10 +99,10 @@ describe('Animated Walls', { concurrency: false }, () => {
     await screenshot(page, '01-home-empty');
   });
 
-  it('is honest that the renderer is not implemented', async () => {
-    await page.getByTestId('renderer-pending').waitFor();
-    const text = await page.getByTestId('renderer-pending').textContent();
-    assert.match(text, /nothing is drawn to your desktop yet/);
+  it('has a working renderer and no longer says otherwise', async () => {
+    const { health } = await page.evaluate(() => window.animatedWalls.engine.getStatus());
+    assert.equal(health.rendererImplemented, true);
+    assert.equal(await page.getByText('nothing is drawn to your desktop').count(), 0);
   });
 
   it('navigates every page', async () => {
@@ -267,7 +267,8 @@ describe('Animated Walls', { concurrency: false }, () => {
     const state = await page.evaluate(() => window.animatedWalls.engine.getState());
     const render = state.render[0];
     assert.notEqual(render.wallpaperId, null);
-    assert.ok(['render', 'suspended'].includes(render.decision), `unexpected decision ${render.decision}`);
+    // Aurora Drift is a web wallpaper, which has no renderer yet, so it can never be rendering.
+    assert.ok(['blocked', 'suspended'].includes(render.decision), `unexpected decision ${render.decision}`);
 
     await page.getByRole('button', { name: 'Close details' }).click();
     await nav(page, 'Home');
@@ -294,7 +295,7 @@ describe('Animated Walls', { concurrency: false }, () => {
 
     await page.getByTestId('run-diagnostics').click();
     await page.getByTestId('diagnostics-result').waitFor({ timeout: 10_000 });
-    assert.match(await page.getByTestId('diagnostics-result').innerText(), /Not yet implemented/);
+    assert.match(await page.getByTestId('diagnostics-result').innerText(), /Active/);
     await screenshot(page, '10-settings');
   });
 
@@ -351,6 +352,57 @@ describe('Animated Walls', { concurrency: false }, () => {
     assert.equal(primaryOf(restored).visibility.state, initial.state);
     assert.equal(primaryOf(restored).visibility.visibleFraction, initial.visibleFraction);
     console.log(`  visibility: ${initial.state} -> covered -> ${primaryOf(restored).visibility.state}; evaluations ${before.health.counters.visibilityEvaluations} -> ${restored.health.counters.visibilityEvaluations}`);
+  });
+
+  it('plays a real video through the whole app, and stops it when covered', async () => {
+    const diagnose = () => page.evaluate(() => window.animatedWalls.engine.getDiagnostics());
+    await app.evaluate(({ dialog }, path) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+    }, join(import.meta.dirname, '../fixtures/sample-h264.mp4'));
+    const imported = await page.evaluate(() => window.animatedWalls.wallpapers.importFromDialog());
+    assert.equal(imported.status, 'imported');
+    const state = await page.evaluate(() => window.animatedWalls.engine.getState());
+    const display = state.displays.find((item) => item.isPrimary);
+
+    const previous = (await page.evaluate(() => window.animatedWalls.wallpapers.listAssignments())).find((item) => item.displayId === display.id);
+    await page.evaluate(([displayId, wallpaperId]) => window.animatedWalls.wallpapers.assign(displayId, wallpaperId), [display.id, imported.wallpaper.id]);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    const start = await diagnose();
+    const startRender = start.state.render.find((item) => item.displayId === display.id);
+    assert.ok(['render', 'suspended'].includes(startRender.decision), `unexpected decision ${startRender.decision}/${startRender.reason}`);
+
+    // Whatever else is open, covering the display must stop frames completely.
+    await app.evaluate(({ BrowserWindow }, bounds) => {
+      const cover = new BrowserWindow({ ...bounds, frame: false, show: false, focusable: false, skipTaskbar: true, alwaysOnTop: true, backgroundColor: '#101218', hasShadow: false, resizable: false });
+      globalThis.__cover = cover;
+      cover.showInactive();
+      cover.setBounds(bounds);
+    }, display.bounds);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const covered = await diagnose();
+    assert.equal(covered.state.render.find((item) => item.displayId === display.id).reason, 'desktop-covered');
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const stillCovered = await diagnose();
+    assert.equal(stillCovered.health.counters.framesPresented, covered.health.counters.framesPresented, 'frames were presented while covered');
+    assert.equal(stillCovered.health.counters.framesDecoded, covered.health.counters.framesDecoded, 'frames were decoded while covered');
+    assert.equal(stillCovered.gpuUsage.videoDecodePercent, 0);
+
+    await app.evaluate(() => globalThis.__cover.destroy());
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    // Only if the desktop was showing to begin with can playback be expected to resume here.
+    if (startRender.decision === 'render') {
+      const resumed = await diagnose();
+      assert.ok(resumed.health.counters.framesPresented > stillCovered.health.counters.framesPresented, 'frames did not resume after uncovering');
+      assert.equal(resumed.state.render.find((item) => item.displayId === display.id).decision, 'render');
+    }
+
+    await page.evaluate(async ([displayId, wallpaperId, removeId]) => {
+      await window.animatedWalls.wallpapers.assign(displayId, wallpaperId);
+      await window.animatedWalls.wallpapers.remove(removeId);
+    }, [display.id, previous.wallpaperId, imported.wallpaper.id]);
   });
 
   it('tells the UI when a setting changes elsewhere, such as from the tray', async () => {

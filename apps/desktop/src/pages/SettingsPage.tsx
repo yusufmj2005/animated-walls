@@ -77,7 +77,7 @@ export function SettingsPage() {
         />
       </Section>
 
-      <Section title="Performance" description="Saved now and sent to the engine. Frame rate and quality apply once the renderer ships.">
+      <Section title="Performance" description="Applied straight away to wallpapers on your desktop.">
         <Row
           title="Frame rate limit"
           control={
@@ -92,6 +92,7 @@ export function SettingsPage() {
         />
         <Row
           title="Rendering quality"
+          hint="Balanced draws at 75% resolution to save GPU time. High and Maximum both draw at full resolution for now."
           control={
             <Segmented
               label="Rendering quality"
@@ -194,7 +195,7 @@ export function SettingsPage() {
               <KeyValue label="Visibility evaluations">{diagnostics.health.counters.visibilityEvaluations}</KeyValue>
               <KeyValue label="Render state changes">{diagnostics.health.counters.renderTransitions}</KeyValue>
               <KeyValue label="Desktop layout">{diagnostics.desktopHost.layout}</KeyValue>
-              <KeyValue label="Wallpaper renderer">{diagnostics.health.rendererImplemented ? 'Active' : 'Not yet implemented'}</KeyValue>
+              <KeyValue label="Wallpaper renderer">{diagnostics.health.rendererImplemented ? 'Active' : 'Not available'}</KeyValue>
             </dl>
           )}
         </div>

@@ -215,6 +215,12 @@ function DetailsPanel({ wallpaper, onClose }: { wallpaper: WallpaperRecord; onCl
           <KeyValue label="Imported">{formatDate(wallpaper.importedAt)}</KeyValue>
         </dl>
 
+        {wallpaper.type !== 'video' && (
+          <p className="mt-4 rounded-control bg-warn-soft px-3 py-2.5 text-[12.5px] text-warn" data-testid="type-not-playable">
+            {wallpaper.type === 'web' ? 'Web' : 'Image'} wallpapers can't play on your desktop yet. Video wallpapers can.
+          </p>
+        )}
+
         {wallpaper.type === 'web' && (
           <div className="mt-4 flex items-start gap-2">
             <Badge tone="neutral">Web</Badge>

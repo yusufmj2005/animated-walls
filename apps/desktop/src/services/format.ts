@@ -36,4 +36,7 @@ export const REASON_LABELS: Record<RenderReason, string> = {
   'system-suspended': 'System asleep',
   'on-battery': 'On battery',
   'user-paused': 'Paused by you',
+  'unsupported-wallpaper-type': "This type can't play yet",
+  'playback-failed': "This wallpaper couldn't play",
+  'no-hardware-decode': 'No GPU decoding for this video',
 };

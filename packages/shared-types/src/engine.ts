@@ -20,10 +20,6 @@ export interface EngineHealth {
   workingSetBytes: number;
   managedHeapBytes: number;
   threadCount: number;
-  /**
-   * False until the wallpaper renderer ships. While false, render states describe
-   * what the engine has decided, and no wallpaper frames are being produced.
-   */
   rendererImplemented: boolean;
   counters: EngineCounters;
 }
@@ -116,7 +112,10 @@ export type RenderReason =
   | 'display-off'
   | 'system-suspended'
   | 'on-battery'
-  | 'user-paused';
+  | 'user-paused'
+  | 'unsupported-wallpaper-type'
+  | 'playback-failed'
+  | 'no-hardware-decode';
 
 export interface DisplayRenderState {
   displayId: string;
@@ -171,6 +170,9 @@ export interface PlaybackConfig {
 export interface DisplayAssignment {
   displayId: string;
   wallpaperId: string;
+  /** The file to play. Null for a type with no renderer yet. */
+  mediaPath: string | null;
+  mediaType: 'video' | 'image' | 'web';
 }
 
 export interface EngineMethods {
