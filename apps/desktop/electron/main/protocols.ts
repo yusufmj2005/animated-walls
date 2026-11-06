@@ -56,24 +56,30 @@ export function registerAppProtocol(rendererRoot: string, logger: Logger): void 
     const url = new URL(request.url);
     if (url.host !== APP_HOST) return new Response('Not found', { status: 404 });
 
-    const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
-    const path = resolve(join(root, relative));
-    if (!path.startsWith(root + sep)) {
-      logger.warn('app.protocol', 'protocol.traversal-blocked', { pathname: url.pathname });
+    try {
+      const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+      const path = resolve(join(root, relative));
+      if (!path.startsWith(root + sep)) {
+        logger.warn('app.protocol', 'protocol.traversal-blocked', { pathname: url.pathname });
+        return new Response('Not found', { status: 404 });
+      }
+
+      const response = await net.fetch(pathToFileURL(path).toString());
+      if (!response.ok) return new Response('Not found', { status: 404 });
+
+      return new Response(response.body, {
+        status: 200,
+        headers: {
+          'Content-Type': MIME_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream',
+          'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
+    } catch (error) {
+      // A missing file and a malformed URL both end up here.
+      logger.warn('app.protocol', 'protocol.failed', { pathname: url.pathname, error });
       return new Response('Not found', { status: 404 });
     }
-
-    const response = await net.fetch(pathToFileURL(path).toString());
-    if (!response.ok) return new Response('Not found', { status: 404 });
-
-    return new Response(response.body, {
-      status: 200,
-      headers: {
-        'Content-Type': MIME_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream',
-        'Content-Security-Policy': CONTENT_SECURITY_POLICY,
-        'X-Content-Type-Options': 'nosniff',
-      },
-    });
   });
 }
 

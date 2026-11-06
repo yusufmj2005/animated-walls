@@ -13,7 +13,9 @@ export function useImport() {
       const result = await start();
       if (result.status === 'imported') {
         await refreshWallpapers();
-        notify({ tone: 'ok', title: `Imported "${result.wallpaper.name}"`, issues: result.warnings.length > 0 ? result.warnings : undefined });
+        // Warnings stay until dismissed, so they are not gone before anyone can read them.
+        const warned = result.warnings.length > 0;
+        notify({ tone: warned ? 'warn' : 'ok', title: `Imported "${result.wallpaper.name}"`, issues: warned ? result.warnings : undefined });
       } else if (result.status === 'rejected') {
         notify({ tone: 'bad', title: `${result.fileName} could not be imported`, issues: result.issues });
       }

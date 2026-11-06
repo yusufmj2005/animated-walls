@@ -16,7 +16,6 @@ public static unsafe class DisplayEnumerator
     {
         var names = ReadTargetNames();
         var displays = new List<DisplayInfo>();
-        var handle = GCHandle.Alloc(displays);
         var state = new EnumerationState(displays, names);
         var stateHandle = GCHandle.Alloc(state);
         try
@@ -29,7 +28,6 @@ public static unsafe class DisplayEnumerator
         finally
         {
             stateHandle.Free();
-            handle.Free();
         }
         if (state.Failure is not null) throw new InvalidOperationException("Display enumeration failed.", state.Failure);
 

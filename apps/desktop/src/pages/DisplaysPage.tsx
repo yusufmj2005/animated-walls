@@ -7,7 +7,9 @@ import { REASON_LABELS } from '../services/format';
 import { assignmentsStore, engineStateStore, engineStatusStore, refreshWallpapers, reportFailure, wallpapersStore } from '../stores/appStores';
 import { useStore } from '../stores/createStore';
 
-const MAP_HEIGHT = 220;
+const MAP_MAX_HEIGHT = 220;
+// Narrow enough to fit at the window's minimum width, so a wide monitor row never overflows.
+const MAP_MAX_WIDTH = 600;
 
 function boundsOf(displays: readonly DisplayInfo[]): Rect {
   const left = Math.min(...displays.map((display) => display.bounds.x));
@@ -23,11 +25,11 @@ function DisplayMap({ displays, selectedId, onSelect }: { displays: readonly Dis
   const wallpapers = useStore(wallpapersStore);
 
   const area = useMemo(() => boundsOf(displays), [displays]);
-  const scale = MAP_HEIGHT / area.height;
+  const scale = Math.min(MAP_MAX_HEIGHT / area.height, MAP_MAX_WIDTH / area.width);
 
   return (
     <div className="flex justify-center rounded-card border border-line bg-surface px-6 py-8">
-      <div className="relative" style={{ width: area.width * scale, height: MAP_HEIGHT }}>
+      <div className="relative" style={{ width: area.width * scale, height: area.height * scale }}>
         {displays.map((display, index) => {
           const wallpaperId = assignments.find((item) => item.displayId === display.id)?.wallpaperId;
           const preview = wallpapers.find((item) => item.id === wallpaperId)?.previewUrl;

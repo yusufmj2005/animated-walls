@@ -229,7 +229,16 @@ public sealed unsafe class DesktopSignalPump : IDisposable
     [UnmanagedCallersOnly]
     private static void WinEventCallback(nint hook, uint eventType, nint hwnd, int idObject, int idChild, uint thread, uint time)
     {
-        _instance?.OnWinEvent(eventType, hwnd, idObject, idChild);
+        var instance = _instance;
+        try
+        {
+            instance?.OnWinEvent(eventType, hwnd, idObject, idChild);
+        }
+        catch (Exception exception)
+        {
+            // An exception must not cross into native code.
+            instance?._logger.Error("engine.visibility", "win-event.failed", exception);
+        }
     }
 
     private void OnWinEvent(uint eventType, nint hwnd, int idObject, int idChild)
@@ -242,7 +251,12 @@ public sealed unsafe class DesktopSignalPump : IDisposable
             // Cursors, carets and child controls generate a torrent of location events,
             // so drop everything but whole windows before doing any work.
             if (idObject != OBJID_WINDOW || idChild != CHILDID_SELF || hwnd == 0) return;
-            if (User32.GetAncestor(hwnd, User32.GA_ROOT) != hwnd) return;
+
+            // Events arrive after the fact, so by now a closing window may already be gone,
+            // and GetAncestor returns 0. Those events matter most: they mean something
+            // stopped covering the wallpaper. Only known child windows are dropped.
+            var root = User32.GetAncestor(hwnd, User32.GA_ROOT);
+            if (root != 0 && root != hwnd) return;
         }
 
         ArmVisibilityTimer();
@@ -300,6 +314,7 @@ public sealed unsafe class DesktopSignalPump : IDisposable
                 return 0;
 
             case WM_DESTROY:
+                Wtsapi32.WTSUnRegisterSessionNotification(hwnd);
                 User32.PostQuitMessage(0);
                 return 0;
 
@@ -381,7 +396,6 @@ public sealed unsafe class DesktopSignalPump : IDisposable
         _hooks.Clear();
         foreach (var handle in _powerNotifications) User32.UnregisterPowerSettingNotification(handle);
         _powerNotifications.Clear();
-        if (_window != 0) Wtsapi32.WTSUnRegisterSessionNotification(_window);
         _window = 0;
         Interlocked.CompareExchange(ref _instance, null, this);
     }

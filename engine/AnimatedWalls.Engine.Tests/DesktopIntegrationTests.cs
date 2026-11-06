@@ -83,6 +83,13 @@ public unsafe class DesktopIntegrationTests
     }
 
     [Fact]
+    public void The_lock_state_of_this_session_reads_as_unlocked()
+    {
+        using var logger = new StructuredLogger(null, level: LogLevel.Error);
+        Assert.False(SessionLock.Read(logger));
+    }
+
+    [Fact]
     public void Gpu_detection_never_selects_a_software_adapter()
     {
         var gpu = GpuCapabilityDetector.Detect();

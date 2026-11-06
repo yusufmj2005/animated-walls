@@ -24,6 +24,11 @@ const LOG_SOURCE = 'app.library';
 const STAGING_DIRECTORY = '.staging';
 const VIDEO_KINDS: readonly MediaKind[] = ['mp4', 'webm'];
 const IMAGE_KINDS: readonly MediaKind[] = ['png', 'jpeg', 'webp'];
+const WALLPAPER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// A video being previewed can hold its file open for a moment after it is unmounted.
+const REMOVE_RETRIES = { maxRetries: 5, retryDelay: 100 };
+const RENAME_RETRY_DELAYS_MS = [50, 100, 200, 400, 800];
+const TRANSIENT_RENAME_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY']);
 
 export const IMPORTABLE_EXTENSIONS = ['awall', 'mp4', 'webm', 'png', 'jpg', 'jpeg', 'webp'];
 
@@ -81,10 +86,15 @@ export class WallpaperLibrary {
     this.measureImage = options.measureImage;
   }
 
-  /** Removes staging directories an interrupted import left behind. */
+  /** Clears what an interrupted import or a failed removal left behind. */
   async initialise(): Promise<void> {
     await mkdir(this.root, { recursive: true });
     await rm(join(this.root, STAGING_DIRECTORY), { recursive: true, force: true });
+
+    for (const id of await this.findOrphans()) {
+      this.logger.warn(LOG_SOURCE, 'library.orphan-removed', { id });
+      await rm(this.directoryOf(id), { recursive: true, force: true, ...REMOVE_RETRIES });
+    }
   }
 
   list(query?: Parameters<WallpaperRepository['list']>[0]): WallpaperRecord[] {
@@ -236,7 +246,7 @@ export class WallpaperLibrary {
    */
   private async commit(staging: string, row: WallpaperRow): Promise<void> {
     const target = this.directoryOf(row.id);
-    await rename(staging, target);
+    await renameWithRetry(staging, target);
     try {
       this.repository.insert(row);
     } catch (error) {
@@ -248,7 +258,13 @@ export class WallpaperLibrary {
   async remove(id: string): Promise<boolean> {
     const removed = this.repository.delete(id);
     if (!removed) return false;
-    await rm(this.directoryOf(id), { recursive: true, force: true });
+    try {
+      await rm(this.directoryOf(id), { recursive: true, force: true, ...REMOVE_RETRIES });
+    } catch (error) {
+      // The wallpaper is already gone from the library, so this is not a failure the user
+      // can act on. A file was held open, and the folder is cleared on the next start.
+      this.logger.warn(LOG_SOURCE, 'wallpaper.files-left-behind', { id, error });
+    }
     this.logger.info(LOG_SOURCE, 'wallpaper.removed', { id });
     return true;
   }
@@ -274,18 +290,18 @@ export class WallpaperLibrary {
     return { path, kind };
   }
 
-  /** Library directories on disk with no database row, for diagnostics. */
-  async findOrphans(): Promise<string[]> {
+  /** Directories named like one of our wallpapers that have no database row. */
+  private async findOrphans(): Promise<string[]> {
     const entries = await readdir(this.root, { withFileTypes: true });
     return entries
-      .filter((entry) => entry.isDirectory() && entry.name !== STAGING_DIRECTORY && !this.repository.find(entry.name))
+      .filter((entry) => entry.isDirectory() && WALLPAPER_ID.test(entry.name) && !this.repository.find(entry.name))
       .map((entry) => entry.name);
   }
 
   private directoryOf(id: string): string {
     // IDs are UUIDs we generate, but this path is about to be deleted or served, so a
     // malformed one is treated as a bug rather than trusted.
-    if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error(`Invalid wallpaper id: ${id}`);
+    if (!WALLPAPER_ID.test(id)) throw new Error(`Invalid wallpaper id: ${id}`);
     return join(this.root, id);
   }
 }
@@ -294,13 +310,31 @@ export class WallpaperLibrary {
 export function validateImportSource(path: string): string | null {
   if (!isAbsolute(path) || !win32.isAbsolute(path)) return 'Only absolute file paths can be imported.';
   // Touching a UNC path makes Windows authenticate to that host, which would leak the
-  // user's NTLM hash to an attacker-chosen server.
-  if (path.startsWith('\\\\') || path.startsWith('//')) return 'Files on network paths cannot be imported. Copy the file to this PC first.';
+  // user's NTLM hash to an attacker-chosen server. Normalising first catches the mixed
+  // forms, such as "/\\server\\share", that Windows also treats as UNC.
+  if (win32.normalize(path).startsWith('\\\\')) return 'Files on network paths cannot be imported. Copy the file to this PC first.';
   const extension = extname(path).toLowerCase().slice(1);
   if (!IMPORTABLE_EXTENSIONS.includes(extension)) {
     return `This file type is not supported. Import one of: ${IMPORTABLE_EXTENSIONS.map((item) => `.${item}`).join(', ')}.`;
   }
   return null;
+}
+
+/**
+ * Windows Defender and the search indexer briefly open files that were just written, which
+ * makes renaming their folder fail. That clears by itself within moments.
+ */
+async function renameWithRetry(from: string, to: string): Promise<void> {
+  for (const delay of RENAME_RETRY_DELAYS_MS) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (error) {
+      if (!TRANSIENT_RENAME_ERRORS.has((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      await new Promise((done) => setTimeout(done, delay));
+    }
+  }
+  await rename(from, to);
 }
 
 async function sniffFile(path: string): Promise<MediaKind | null> {

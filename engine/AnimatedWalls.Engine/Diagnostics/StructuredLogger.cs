@@ -93,14 +93,16 @@ public sealed class StructuredLogger : IDisposable
 
         lock (_gate)
         {
-            if (_stream is null)
+            if (FilePath is null)
             {
-                if (FilePath is null) Console.Error.WriteLine(line);
+                Console.Error.WriteLine(line);
                 return;
             }
 
             try
             {
+                // Reopens after an earlier failure, so one bad moment does not end logging.
+                _stream ??= OpenStream(FilePath);
                 RotateIfNeeded(bytes.Length);
                 _stream?.Write(bytes);
                 _stream?.Flush();
@@ -166,7 +168,8 @@ public sealed class StructuredLogger : IDisposable
     }
 
     private static FileStream OpenStream(string path) =>
-        new(path, FileMode.Append, FileAccess.Write, FileShare.Read | FileShare.Delete);
+        // ReadWrite so an engine that is restarting can log while the old one finishes exiting.
+        new(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
 
     private void ReportFailure(string operation, Exception exception)
     {

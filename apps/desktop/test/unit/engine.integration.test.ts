@@ -110,8 +110,11 @@ describe.skipIf(!enginePath)('engine over named pipe', () => {
       expect(assigned.render[0]!.wallpaperId).toBe('w1');
       expect(assigned.render[0]!.decision).not.toBe('idle');
 
+      // Machines with no GPU, like CI runners, must stay blocked rather than ever falling back.
+      const gpu = await supervisor.call('engine.capabilities');
+      const expected = gpu.status === 'supported' ? { decision: 'suspended', reason: 'user-paused' } : { decision: 'blocked', reason: 'gpu-unsupported' };
       const paused = await supervisor.call('playback.setPaused', { paused: true });
-      expect(paused.render[0]).toMatchObject({ decision: 'suspended', reason: 'user-paused' });
+      expect(paused.render[0]).toMatchObject(expected);
 
       await until(() => events.some((event) => event.paused));
     });
@@ -150,6 +153,42 @@ describe.skipIf(!enginePath)('engine over named pipe', () => {
       await until(() => supervisor.status.connection === 'connected' && supervisor.status.health?.pid !== pid, 15_000);
       expect(supervisor.status.restarts).toBe(1);
       expect((await supervisor.call('engine.health')).pid).not.toBe(pid);
+    });
+
+    it('reports real display power from the start, not "unknown"', async () => {
+      await supervisor.start();
+      await until(() => supervisor.state?.session.displayPower !== 'unknown', 3000);
+      expect(['on', 'dimmed', 'off']).toContain(supervisor.state?.session.displayPower);
+    });
+
+    function spawnedPids(): number[] {
+      const lines = readFileSync(join(directory.path, 'test.log'), 'utf8').trim().split('\n');
+      return lines
+        .map((line) => JSON.parse(line) as { event: string; data?: { pid: number } })
+        .filter((line) => line.event === 'engine.spawned')
+        .map((line) => line.data!.pid);
+    }
+
+    it('leaves exactly one engine after overlapping restarts', async () => {
+      await supervisor.start();
+      await Promise.all([supervisor.restart(), supervisor.restart(), supervisor.restart()]);
+      expect(supervisor.status.connection).toBe('connected');
+      await until(() => spawnedPids().filter(isRunning).length === 1, 8000);
+    });
+
+    it('does not connect after being stopped during startup', async () => {
+      const starting = supervisor.start();
+      await supervisor.stop();
+      await starting;
+      expect(supervisor.status.connection).toBe('stopped');
+      await until(() => spawnedPids().filter(isRunning).length === 0, 8000);
+    });
+
+    it('forgets engine state once the engine stops', async () => {
+      await supervisor.start();
+      expect(supervisor.state).not.toBeNull();
+      await supervisor.stop();
+      expect(supervisor.state).toBeNull();
     });
 
     it('reports failure when the executable is missing', async () => {
@@ -206,6 +245,24 @@ describe.skipIf(!enginePath)('engine over named pipe', () => {
       }
     });
 
+    it.each([
+      ['a missing proof', {}],
+      ['a null proof', { clientProof: null }],
+      ['a numeric proof', { clientProof: 5 }],
+    ])('stays usable after a handshake with %s', async (_name, params) => {
+      const { child, pipe, token, ready } = spawnEngine();
+      await ready;
+      try {
+        await attemptHandshake(pipe, params);
+        const client = new EnginePipeClient(pipe, token);
+        await retryConnect(client);
+        await expect(client.request('engine.health')).resolves.toMatchObject({ protocolVersion: 1 });
+        client.close();
+      } finally {
+        child.kill();
+      }
+    });
+
     it('survives an absurd frame length without allocating it', async () => {
       const { child, pipe, ready } = spawnEngine();
       await ready;
@@ -248,6 +305,30 @@ async function retryConnect(client: EnginePipeClient): Promise<void> {
       await new Promise((done) => setTimeout(done, 50));
     }
   }
+}
+
+/** Plays the first half of the handshake honestly, then sends the given authenticate params. */
+function attemptHandshake(pipe: string, authenticateParams: object): Promise<void> {
+  const frame = (message: object): Buffer => {
+    const payload = Buffer.from(JSON.stringify(message));
+    const header = Buffer.alloc(4);
+    header.writeInt32LE(payload.length);
+    return Buffer.concat([header, payload]);
+  };
+  return new Promise((done) => {
+    const socket = connect(`\\\\.\\pipe\\${pipe}`);
+    socket.once('connect', () => {
+      socket.write(frame({ id: 1, method: 'session.hello', params: { clientNonce: 'abc', protocolVersion: 1 } }));
+    });
+    socket.once('data', () => {
+      socket.write(frame({ id: 2, method: 'session.authenticate', params: authenticateParams }));
+      setTimeout(() => {
+        socket.destroy();
+        done();
+      }, 200);
+    });
+    socket.once('error', () => done());
+  });
 }
 
 function rawExchange(pipe: string, message: object): Promise<string> {

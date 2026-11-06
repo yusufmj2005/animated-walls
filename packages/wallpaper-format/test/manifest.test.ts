@@ -102,6 +102,12 @@ describe('parseManifest', () => {
     expect(codes(result)).toContain(expected);
   });
 
+  it('allows line breaks in a description but not in a name', () => {
+    expect(parse({ description: 'Line one.\nLine two.\tTabbed.' }).ok).toBe(true);
+    expect(parse({ name: 'Line one\nLine two' }).ok).toBe(false);
+    expect(parse({ description: 'bell\u0007' }).ok).toBe(false);
+  });
+
   it('warns but accepts unknown capabilities and fields', () => {
     const result = parse({ requiredCapabilities: ['future.thing'], extra: true });
     expect(result.ok).toBe(true);

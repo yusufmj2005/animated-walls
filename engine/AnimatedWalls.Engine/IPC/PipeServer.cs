@@ -78,6 +78,11 @@ public sealed class PipeServer(
             {
                 return;
             }
+            catch (Exception exception)
+            {
+                // Whatever a client managed to trigger, it must not take the endpoint down.
+                logger.Error(LogSource, "client.failed", exception);
+            }
 
             // Read before resetting: every exit path above, including a broken pipe, reaches
             // here, and only losing an authenticated client should end the engine.
@@ -199,7 +204,7 @@ public sealed class PipeServer(
             if (authRequest?.Method != "session.authenticate" || authRequest.Params is not { } authParams) return Reject("the second message was not session.authenticate");
 
             var auth = authParams.Deserialize(ProtocolJson.Default.AuthenticateParams);
-            if (auth is null || !authenticator.VerifyClientProof(serverNonce, auth.ClientProof))
+            if (auth is null || string.IsNullOrEmpty(auth.ClientProof) || !authenticator.VerifyClientProof(serverNonce, auth.ClientProof))
             {
                 await SendResponseAsync(authRequest.Id, null, new RpcError(RpcErrorCodes.Unauthenticated, "Authentication failed."), timeout.Token).ConfigureAwait(false);
                 return Reject("the client proof was wrong");

@@ -301,6 +301,13 @@ internal static partial class Shell32
 internal static partial class Wtsapi32
 {
     public const uint NOTIFY_FOR_THIS_SESSION = 0;
+    public const uint WTS_CURRENT_SESSION = 0xFFFFFFFF;
+    public const int WTSSessionInfoEx = 25;
+    public const int WTS_SESSIONSTATE_LOCK = 0;
+
+    [LibraryImport("wtsapi32.dll", EntryPoint = "WTSQuerySessionInformationW")] [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool WTSQuerySessionInformation(nint server, uint sessionId, int infoClass, out nint buffer, out uint bytes);
+    [LibraryImport("wtsapi32.dll")] public static partial void WTSFreeMemory(nint memory);
 
     [LibraryImport("wtsapi32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool WTSRegisterSessionNotification(nint hwnd, uint flags);
     [LibraryImport("wtsapi32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static partial bool WTSUnRegisterSessionNotification(nint hwnd);

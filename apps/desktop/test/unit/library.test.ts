@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -218,6 +219,19 @@ describe('WallpaperLibrary', () => {
       expect(existsSync(original)).toBe(true);
     });
 
+    it('still removes a wallpaper whose file is open, as when its video is playing', async () => {
+      const result = await library.importPath(writeFile('playing.webm', WEBM_BYTES));
+      if (result.status !== 'imported') throw new Error('import failed');
+      const media = library.resolveMedia(result.wallpaper.id, 'entry');
+      const handle = await open(media!.path, 'r');
+      try {
+        expect(await library.remove(result.wallpaper.id)).toBe(true);
+        expect(library.list()).toHaveLength(0);
+      } finally {
+        await handle.close();
+      }
+    });
+
     it('reports when the id is unknown', async () => {
       expect(await library.remove('00000000-0000-0000-0000-000000000000')).toBe(false);
     });
@@ -230,9 +244,17 @@ describe('WallpaperLibrary', () => {
     expect(existsSync(stale)).toBe(false);
   });
 
-  it('finds directories with no database row', async () => {
+  it('clears wallpaper directories with no database row, and nothing else', async () => {
     mkdirSync(join(root, '00000000-0000-0000-0000-000000000009'));
-    expect(await library.findOrphans()).toEqual(['00000000-0000-0000-0000-000000000009']);
+    mkdirSync(join(root, 'not-one-of-ours'));
+    const kept = await library.importPath(writeFile('kept.png', PNG_BYTES));
+    if (kept.status !== 'imported') throw new Error('import failed');
+
+    await library.initialise();
+
+    expect(existsSync(join(root, '00000000-0000-0000-0000-000000000009'))).toBe(false);
+    expect(existsSync(join(root, 'not-one-of-ours'))).toBe(true);
+    expect(existsSync(join(root, kept.wallpaper.id))).toBe(true);
   });
 });
 
@@ -240,7 +262,18 @@ describe('validateImportSource', () => {
   it('accepts a local absolute path', () => {
     expect(validateImportSource('C:\\Users\\me\\clip.mp4')).toBeNull();
   });
-  it.each(['clip.mp4', '..\\clip.mp4', '\\\\evil-server\\share\\clip.mp4', '//evil-server/share/clip.mp4', 'C:\\Windows\\system32\\calc.exe', 'C:\\x\\notes.txt'])('rejects %s', (path) => {
+  it.each([
+    'clip.mp4',
+    '..\\clip.mp4',
+    '\\\\evil-server\\share\\clip.mp4',
+    '//evil-server/share/clip.mp4',
+    '/\\evil-server\\share\\clip.mp4',
+    '\\/evil-server/share/clip.mp4',
+    '\\\\?\\UNC\\evil-server\\share\\clip.mp4',
+    '\\\\.\\C:\\clip.mp4',
+    'C:\\Windows\\system32\\calc.exe',
+    'C:\\x\\notes.txt',
+  ])('rejects %s', (path) => {
     expect(validateImportSource(path)).not.toBeNull();
   });
 });

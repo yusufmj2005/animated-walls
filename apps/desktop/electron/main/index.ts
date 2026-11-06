@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BrowserWindow, app, dialog, nativeImage, session, shell } from 'electron';
 import { IPC, type AppInfo, type AppSettings } from '@animated-walls/shared-types';
@@ -46,7 +45,8 @@ function resourcePath(...segments: string[]): string {
 }
 
 function createWindow(settings: AppSettings, logger: Logger): BrowserWindow {
-  const startHidden = process.argv.includes(START_HIDDEN_ARG) || settings.startMinimized;
+  // Hidden is only safe with a tray icon, or there would be no way to reach the app.
+  const startHidden = tray !== null && (process.argv.includes(START_HIDDEN_ARG) || settings.startMinimized);
 
   const window = new BrowserWindow({
     width: 1280,
@@ -81,7 +81,7 @@ function createWindow(settings: AppSettings, logger: Logger): BrowserWindow {
   window.on('close', (event) => {
     if (quitting) return;
     // Read fresh, because the setting can change while the window is open.
-    if (services?.settings.getAll().closeToTray) {
+    if (tray && services?.settings.getAll().closeToTray) {
       event.preventDefault();
       window.hide();
       logger.info(LOG_SOURCE, 'window.hidden-to-tray');
@@ -90,6 +90,13 @@ function createWindow(settings: AppSettings, logger: Logger): BrowserWindow {
 
   window.on('closed', () => {
     mainWindow = null;
+  });
+
+  // Windows does not emit before-quit when logging off or shutting down. Without this the
+  // close handler above would hide the window instead of letting the session end.
+  window.on('session-end', () => {
+    quitting = true;
+    logger.info(LOG_SOURCE, 'app.session-end');
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -196,8 +203,6 @@ async function bootstrap(): Promise<void> {
     },
   });
   await library.initialise();
-  const orphans = await library.findOrphans();
-  if (orphans.length > 0) logger.warn(LOG_SOURCE, 'library.orphan-directories', { count: orphans.length, ids: orphans });
 
   const initialSettings = settingsRepository.getAll();
   logger.setLevel(initialSettings.logLevel);
@@ -249,6 +254,19 @@ async function bootstrap(): Promise<void> {
   };
   applyLoginItem(initialSettings.launchAtStartup);
 
+  /**
+   * Passes a saved change to the engine. The database is the source of truth and everything
+   * is re-sent on reconnection, so a failure here must not report the save itself as failed.
+   */
+  const tellEngine = async (what: string, call: () => Promise<unknown>): Promise<void> => {
+    if (engine.status.connection !== 'connected') return;
+    try {
+      await call();
+    } catch (error) {
+      logger.warn(LOG_SOURCE, 'engine.update-failed', { what, error });
+    }
+  };
+
   const setSetting = async <K extends keyof AppSettings>(key: K, value: AppSettings[K]): Promise<AppSettings> => {
     const next = settingsRepository.set(key, value);
     logger.info(LOG_SOURCE, 'settings.changed', { key, value });
@@ -256,22 +274,20 @@ async function bootstrap(): Promise<void> {
     if (key === 'launchAtStartup') applyLoginItem(value as boolean);
     if (key === 'logLevel') logger.setLevel(next.logLevel);
     if (key === 'pausePlayback') tray?.refreshMenu();
+    // The tray changes settings too, so the UI cannot rely on its own call's result.
+    broadcast(IPC.settingsChangedEvent, next);
 
-    if (engine.status.connection === 'connected') {
-      if (key === 'logLevel') await engine.call('diagnostics.setLogLevel', { level: next.logLevel });
-      if (key === 'pausePlayback') await engine.call('playback.setPaused', { paused: next.pausePlayback });
-      if (key === 'frameRateLimit' || key === 'renderQuality' || key === 'pauseOnBattery') {
-        await engine.call('playback.configure', { frameRateLimit: next.frameRateLimit, quality: next.renderQuality, pauseOnBattery: next.pauseOnBattery });
-      }
+    if (key === 'logLevel') await tellEngine(key, () => engine.call('diagnostics.setLogLevel', { level: next.logLevel }));
+    if (key === 'pausePlayback') await tellEngine(key, () => engine.call('playback.setPaused', { paused: next.pausePlayback }));
+    if (key === 'frameRateLimit' || key === 'renderQuality' || key === 'pauseOnBattery') {
+      await tellEngine(key, () => engine.call('playback.configure', { frameRateLimit: next.frameRateLimit, quality: next.renderQuality, pauseOnBattery: next.pauseOnBattery }));
     }
     return next;
   };
 
   const syncAssignments = async (): Promise<ReturnType<WallpaperRepository['listAssignments']>> => {
     const assignments = wallpaperRepository.listAssignments();
-    if (engine.status.connection === 'connected') {
-      await engine.call('playback.setAssignments', { assignments: assignments.map(({ displayId, wallpaperId }) => ({ displayId, wallpaperId })) });
-    }
+    await tellEngine('assignments', () => engine.call('playback.setAssignments', { assignments: assignments.map(({ displayId, wallpaperId }) => ({ displayId, wallpaperId })) }));
     return assignments;
   };
 
@@ -311,6 +327,7 @@ async function bootstrap(): Promise<void> {
       return library.importPath(path);
     },
     listAssignments: () => wallpaperRepository.listAssignments(),
+    syncAssignments,
     assign: async (displayId, wallpaperId) => {
       if (!wallpaperRepository.find(wallpaperId)) throw new Error('That wallpaper is no longer in the library.');
       wallpaperRepository.assign(displayId, wallpaperId);
@@ -322,10 +339,10 @@ async function bootstrap(): Promise<void> {
     },
   });
 
-  const trayIcon = resourcePath('icons', 'tray.png');
-  if (existsSync(trayIcon)) {
+  // The app still works without a tray icon, it just cannot hide to one.
+  try {
     tray = new AppTray({
-      iconPath: trayIcon,
+      iconPath: resourcePath('icons', 'tray.png'),
       showWindow,
       isPaused: () => settingsRepository.getAll().pausePlayback,
       setPaused: (paused) => {
@@ -334,8 +351,8 @@ async function bootstrap(): Promise<void> {
       quit: () => app.quit(),
     });
     logger.info(LOG_SOURCE, 'tray.created');
-  } else {
-    logger.error(LOG_SOURCE, 'tray.icon-missing', { path: trayIcon });
+  } catch (error) {
+    logger.error(LOG_SOURCE, 'tray.unavailable', { error });
   }
 
   mainWindow = createWindow(initialSettings, logger);
@@ -356,16 +373,21 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(bootstrap).catch(fatal);
 
-  // The tray keeps the app alive with no windows. Only an explicit quit ends it.
+  // With the tray option on, the app stays alive with no windows until an explicit quit.
   app.on('window-all-closed', () => {
-    if (quitting || !tray) app.quit();
+    if (quitting || !tray || !services?.settings.getAll().closeToTray) app.quit();
   });
 
+  let shutdownStarted = false;
   let shutdownComplete = false;
   app.on('before-quit', (event) => {
     quitting = true;
     if (shutdownComplete || !services) return;
     event.preventDefault();
+
+    // A second quit while the first is under way must not close the database twice.
+    if (shutdownStarted) return;
+    shutdownStarted = true;
 
     const { logger, engine, closeDatabase } = services;
     logger.info(LOG_SOURCE, 'app.quit-requested');

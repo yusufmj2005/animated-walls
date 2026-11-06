@@ -65,16 +65,20 @@ export function startStores(): void {
   api.engine.onStatus((status) => {
     const wasConnected = engineStatusStore.get().connection === 'connected';
     engineStatusStore.set(status);
+    // Everything the engine reported is out of date the moment it stops.
+    if (status.connection !== 'connected') engineStateStore.set(null);
     if (status.connection === 'connected' && !wasConnected) {
       refreshEngine().catch((error: unknown) => reportFailure('The engine status could not be read', error));
     }
   });
   api.engine.onState((state) => engineStateStore.set(state));
+  api.settings.onChanged((settings) => settingsStore.set(settings));
 
   // Updates pause while the window is hidden, so catch up when it returns.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       refreshEngine().catch((error: unknown) => reportFailure('The engine status could not be read', error));
+      api.settings.get().then((settings) => settingsStore.set(settings)).catch((error: unknown) => reportFailure('Settings could not be read', error));
     }
   });
 

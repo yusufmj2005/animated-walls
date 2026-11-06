@@ -15,57 +15,89 @@ public sealed class VisibilityMonitor(
     EngineCounters counters,
     StructuredLogger logger)
 {
+    // Signals arrive on the pump thread, while Start runs on the caller's.
+    private readonly object _gate = new();
     private IReadOnlyList<DisplayInfo> _displays = [];
     private bool _locked;
     private string _displayPower = DisplayPowerStates.Unknown;
     private bool _systemSuspended;
     private bool _onBattery;
 
-    public void Start()
+    /// <summary>
+    /// Connects to the pump. This must happen before the pump starts: Windows sends the
+    /// current display power as soon as the notification is registered and never repeats
+    /// it, so a later subscriber would stay at "unknown" until the display next changes.
+    /// </summary>
+    public void Subscribe()
     {
         pump.VisibilityDirty += Evaluate;
         pump.DisplaysDirty += RefreshDisplays;
-        pump.SessionLockChanged += locked => { _locked = locked; PublishSession(); };
-        pump.DisplayPowerChanged += power => { _displayPower = power; PublishSession(); };
-        pump.SystemSuspendChanged += suspended => { _systemSuspended = suspended; PublishSession(); };
-        pump.BatteryChanged += onBattery => { _onBattery = onBattery; PublishSession(); };
+        pump.SessionLockChanged += locked => UpdateSession(() => _locked = locked);
+        pump.DisplayPowerChanged += power => UpdateSession(() => _displayPower = power);
+        pump.SystemSuspendChanged += suspended => UpdateSession(() => _systemSuspended = suspended);
+        pump.BatteryChanged += onBattery => UpdateSession(() => _onBattery = onBattery);
+    }
 
-        if (Kernel32.GetSystemPowerStatus(out var power))
+    /// <summary>Reads the starting state, which notifications alone cannot provide.</summary>
+    public void Start()
+    {
+        lock (_gate)
         {
-            _onBattery = power.ACLineStatus == 0;
-        }
+            if (Kernel32.GetSystemPowerStatus(out var power))
+            {
+                _onBattery = power.ACLineStatus == 0;
+            }
 
-        RefreshDisplays();
-        PublishSession();
-        Evaluate();
+            // The engine can start on a locked screen, such as a restart after a crash.
+            _locked = SessionLock.Read(logger);
+
+            RefreshDisplays();
+            PublishSession();
+            Evaluate();
+        }
+    }
+
+    private void UpdateSession(Action change)
+    {
+        lock (_gate)
+        {
+            change();
+            PublishSession();
+        }
     }
 
     private void RefreshDisplays()
     {
-        try
+        lock (_gate)
         {
-            _displays = DisplayEnumerator.Enumerate();
-            coordinator.UpdateDisplays(_displays);
-        }
-        catch (InvalidOperationException exception)
-        {
-            logger.Error("engine.displays", "displays.enumeration-failed", exception);
+            try
+            {
+                _displays = DisplayEnumerator.Enumerate();
+                coordinator.UpdateDisplays(_displays);
+            }
+            catch (InvalidOperationException exception)
+            {
+                logger.Error("engine.displays", "displays.enumeration-failed", exception);
+            }
         }
     }
 
     private void Evaluate()
     {
-        counters.VisibilityEvaluated();
-        try
+        lock (_gate)
         {
-            var occluders = WindowSnapshotProvider.Capture();
-            coordinator.UpdateVisibility(_displays.Select(display => VisibilityCalculator.Evaluate(display, occluders)).ToArray());
-            PublishSession();
-        }
-        catch (InvalidOperationException exception)
-        {
-            // A window can vanish mid-walk. The next event triggers a fresh evaluation.
-            logger.Error("engine.visibility", "visibility.evaluation-failed", exception);
+            counters.VisibilityEvaluated();
+            try
+            {
+                var occluders = WindowSnapshotProvider.Capture();
+                coordinator.UpdateVisibility(_displays.Select(display => VisibilityCalculator.Evaluate(display, occluders)).ToArray());
+                PublishSession();
+            }
+            catch (InvalidOperationException exception)
+            {
+                // A window can vanish mid-walk. The next event triggers a fresh evaluation.
+                logger.Error("engine.visibility", "visibility.evaluation-failed", exception);
+            }
         }
     }
 
@@ -89,6 +121,34 @@ public sealed class VisibilityMonitor(
 
         var info = new MonitorInfoEx { Size = (uint)sizeof(MonitorInfoEx) };
         return User32.GetMonitorInfo(monitor, &info) ? new string(info.Device) : string.Empty;
+    }
+}
+
+internal static unsafe class SessionLock
+{
+    // In WTSINFOEXW the union holds a LARGE_INTEGER, so it starts at offset 8, and
+    // SessionFlags is the third 32-bit field inside it.
+    private const int SessionFlagsOffset = 16;
+
+    /// <summary>Whether this session is locked now. Unknown is reported as not locked and logged.</summary>
+    public static bool Read(StructuredLogger logger)
+    {
+        if (!Wtsapi32.WTSQuerySessionInformation(0, Wtsapi32.WTS_CURRENT_SESSION, Wtsapi32.WTSSessionInfoEx, out var buffer, out _))
+        {
+            logger.Warn("engine.session", "session.lock-state-unavailable", new Dictionary<string, object?>
+            {
+                ["error"] = System.Runtime.InteropServices.Marshal.GetLastPInvokeError(),
+            });
+            return false;
+        }
+        try
+        {
+            return *(int*)(buffer + SessionFlagsOffset) == Wtsapi32.WTS_SESSIONSTATE_LOCK;
+        }
+        finally
+        {
+            Wtsapi32.WTSFreeMemory(buffer);
+        }
     }
 }
 

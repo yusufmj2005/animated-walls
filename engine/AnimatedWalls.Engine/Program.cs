@@ -88,7 +88,7 @@ public static class Program
 
         try
         {
-            using var host = new EngineHost(pipeName, stdin, logger);
+            var host = new EngineHost(pipeName, stdin, logger);
             return await host.RunAsync(token).ConfigureAwait(false);
         }
         catch (Exception exception)

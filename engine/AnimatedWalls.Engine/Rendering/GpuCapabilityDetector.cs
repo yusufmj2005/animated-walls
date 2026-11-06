@@ -14,6 +14,7 @@ namespace AnimatedWalls.Engine.Rendering;
 public static class GpuCapabilityDetector
 {
     private const int MicrosoftVendorId = 0x1414;
+    private const int EInvalidArg = unchecked((int)0x80070057);
     private const string WebView2ClientKey = @"Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
 
     private static readonly FeatureLevel[] AcceptedFeatureLevels =
@@ -134,16 +135,13 @@ public static class GpuCapabilityDetector
 
     private static (string FeatureLevel, IReadOnlyList<string> Codecs) ProbeDevice(IDXGIAdapter1 adapter)
     {
-        // DriverType.Unknown with an explicit adapter pins the device to that hardware.
-        // There is deliberately no retry with DriverType.Warp.
-        var created = D3D11.D3D11CreateDevice(
-            adapter,
-            DriverType.Unknown,
-            DeviceCreationFlags.VideoSupport | DeviceCreationFlags.BgraSupport,
-            AcceptedFeatureLevels,
-            out ID3D11Device? device,
-            out FeatureLevel level,
-            out ID3D11DeviceContext? context);
+        // A GPU with no video decode block must still qualify for image and web wallpapers,
+        // so a failure with video support is retried without it.
+        var created = TryCreateHardwareDevice(adapter, DeviceCreationFlags.VideoSupport | DeviceCreationFlags.BgraSupport, out var device, out var context, out var level);
+        if (created.Failure)
+        {
+            created = TryCreateHardwareDevice(adapter, DeviceCreationFlags.BgraSupport, out device, out context, out level);
+        }
         created.CheckError();
 
         using (device)
@@ -151,6 +149,32 @@ public static class GpuCapabilityDetector
         {
             return (FormatFeatureLevel(level), ReadDecodeCodecs(device!));
         }
+    }
+
+    /// <summary>
+    /// DriverType.Unknown with an explicit adapter pins the device to that hardware. There is
+    /// deliberately no retry with DriverType.Warp.
+    /// </summary>
+    private static SharpGen.Runtime.Result TryCreateHardwareDevice(
+        IDXGIAdapter1 adapter,
+        DeviceCreationFlags flags,
+        out ID3D11Device? device,
+        out ID3D11DeviceContext? context,
+        out FeatureLevel level)
+    {
+        // Windows rejects the whole request with E_INVALIDARG if it does not recognise a level
+        // in the list, as older Windows 10 builds do with 12_2. That says nothing about the
+        // GPU, so the newest level is dropped and the request made again.
+        SharpGen.Runtime.Result result = default;
+        device = null;
+        context = null;
+        level = default;
+        for (var first = 0; first < AcceptedFeatureLevels.Length; first++)
+        {
+            result = D3D11.D3D11CreateDevice(adapter, DriverType.Unknown, flags, AcceptedFeatureLevels[first..], out device, out level, out context);
+            if (result.Code != EInvalidArg) return result;
+        }
+        return result;
     }
 
     private static List<string> ReadDecodeCodecs(ID3D11Device device)

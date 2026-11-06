@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline';
 import type { EngineEvents, EngineHealth, EngineMethods, EngineState, EngineStatus, LogLevel } from '@animated-walls/shared-types';
 import type { Logger } from '../logging/logger';
 import { EnginePipeClient } from './enginePipeClient';
+import { RestartBackoff } from './restartBackoff';
 
 const LOG_SOURCE = 'app.engine';
 const READY_TIMEOUT_MS = 20_000;
@@ -46,8 +47,8 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
   private restartTimer: NodeJS.Timeout | null = null;
   private healthTimer: NodeJS.Timeout | null = null;
   private missedHealthChecks = 0;
-  private restartAttempts = 0;
-  private connectedAt = 0;
+  private readonly backoff = new RestartBackoff(RESTART_BACKOFF_MS, STABLE_AFTER_MS);
+  private restartInFlight: Promise<void> | null = null;
   private stopping = false;
   private lastState: EngineState | null = null;
   private currentStatus: EngineStatus = { connection: 'stopped', health: null, lastError: null, restarts: 0 };
@@ -67,7 +68,7 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
   async start(): Promise<void> {
     this.stopping = false;
     this.clearRestartTimer();
-    this.restartAttempts = 0;
+    this.backoff.reset();
     await this.launch();
   }
 
@@ -77,10 +78,16 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
     return (await this.client.request(method, args[0])) as Result<M>;
   }
 
-  async restart(): Promise<void> {
-    this.options.logger.info(LOG_SOURCE, 'engine.restart-requested');
-    await this.stop();
-    await this.start();
+  /** Overlapping requests share one restart. Running them all would orphan an engine. */
+  restart(): Promise<void> {
+    this.restartInFlight ??= (async () => {
+      this.options.logger.info(LOG_SOURCE, 'engine.restart-requested');
+      await this.stop();
+      await this.start();
+    })().finally(() => {
+      this.restartInFlight = null;
+    });
+    return this.restartInFlight;
   }
 
   async stop(): Promise<void> {
@@ -107,12 +114,13 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
     client?.close();
     this.client = null;
     this.process = null;
+    this.lastState = null;
     this.setStatus({ connection: 'stopped', health: null });
   }
 
   private async launch(): Promise<void> {
     const { enginePath, logDirectory, logLevel, logger } = this.options;
-    this.setStatus({ connection: this.restartAttempts > 0 ? 'restarting' : 'starting', health: null });
+    this.setStatus({ connection: this.backoff.attemptCount > 0 ? 'restarting' : 'starting', health: null });
 
     if (!existsSync(enginePath)) {
       this.fail(`The engine executable was not found at ${enginePath}. Run "npm run build:engine".`);
@@ -159,17 +167,26 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
 
     try {
       await waitForReady(child, READY_TIMEOUT_MS);
-      await this.connect(pipeName, token);
+      // The readiness reader has gone, and an undrained pipe could eventually block the engine.
+      child.stdout.resume();
+      await this.connect(pipeName, token, child);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.error(LOG_SOURCE, 'engine.start-failed', { message });
       if (child.exitCode === null) child.kill();
-      // onExit runs next and schedules the restart with this as the reason.
-      this.setStatus({ lastError: message });
+      if (this.isCurrent(child)) {
+        logger.error(LOG_SOURCE, 'engine.start-failed', { message });
+        // onExit runs next and schedules the restart with this as the reason.
+        this.setStatus({ lastError: message });
+      }
     }
   }
 
-  private async connect(pipeName: string, token: string): Promise<void> {
+  /** False once this launch has been overtaken by a stop or a newer launch. */
+  private isCurrent(child: ChildProcessWithoutNullStreams): boolean {
+    return !this.stopping && this.process === child;
+  }
+
+  private async connect(pipeName: string, token: string, child: ChildProcessWithoutNullStreams): Promise<void> {
     const client = new EnginePipeClient(pipeName, token);
     client.on('event', (name, data) => {
       if (name === 'state.changed') {
@@ -185,15 +202,21 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
     });
 
     await client.connect();
+    if (!this.isCurrent(child)) {
+      client.close();
+      return;
+    }
     this.client = client;
-    this.connectedAt = Date.now();
     this.options.logger.info(LOG_SOURCE, 'ipc.connected');
 
     await this.options.onConnected?.(this);
-    this.lastState = await this.call('engine.state');
-    this.emit('state', this.lastState);
-
+    const state = await this.call('engine.state');
     const health = await this.call('engine.health');
+    if (!this.isCurrent(child)) return;
+
+    this.lastState = state;
+    this.emit('state', state);
+    this.backoff.markConnected();
     this.setStatus({ connection: 'connected', health, lastError: null });
     this.startHealthChecks();
   }
@@ -242,18 +265,13 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
   }
 
   private scheduleRestart(reason: string): void {
-    if (this.connectedAt > 0 && Date.now() - this.connectedAt > STABLE_AFTER_MS) {
-      this.restartAttempts = 0;
-    }
-
-    const delay = RESTART_BACKOFF_MS[this.restartAttempts];
+    const delay = this.backoff.next();
     if (delay === undefined) {
       this.fail(`${reason} It kept failing after ${RESTART_BACKOFF_MS.length} restarts, so it will not restart automatically.`);
       return;
     }
 
-    this.restartAttempts += 1;
-    this.options.logger.warn(LOG_SOURCE, 'engine.restart-scheduled', { reason, delayMs: delay, attempt: this.restartAttempts });
+    this.options.logger.warn(LOG_SOURCE, 'engine.restart-scheduled', { reason, delayMs: delay, attempt: this.backoff.attemptCount });
     this.setStatus({ connection: 'restarting', health: null, lastError: reason, restarts: this.currentStatus.restarts + 1 });
 
     this.clearRestartTimer();

@@ -16,7 +16,7 @@ namespace AnimatedWalls.Engine.Core;
 /// stdin closes. The stdin check means a crashed Electron cannot leave an orphan engine,
 /// and it needs no polling and has no PID reuse problem.
 /// </summary>
-public sealed class EngineHost : IDisposable
+public sealed class EngineHost
 {
     private const string LogSource = "engine.host";
     private static readonly TimeSpan GpuUsageWindow = TimeSpan.FromMilliseconds(500);
@@ -58,6 +58,7 @@ public sealed class EngineHost : IDisposable
 
         using var pump = new DesktopSignalPump(_logger, _counters);
         var monitor = new VisibilityMonitor(pump, coordinator, _counters, _logger);
+        monitor.Subscribe();
         pump.SessionEnding += () =>
         {
             _logger.Info(LogSource, "engine.session-ending");
@@ -87,26 +88,42 @@ public sealed class EngineHost : IDisposable
         var serverTask = server.RunAsync(_shutdown.Token);
         var eventsTask = ForwardEventsAsync(server, _shutdown.Token);
 
-        var exitCode = 0;
-        try
-        {
-            await Task.WhenAll(serverTask, eventsTask).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // Normal path: shutdown cancels all three.
-        }
-        catch (Exception exception)
-        {
-            _logger.Error(LogSource, "engine.failed", exception);
-            exitCode = 1;
-        }
+        var exitCode = await RunUntilShutdownAsync(serverTask, eventsTask).ConfigureAwait(false);
 
         _logger.Info(LogSource, "engine.exit", new Dictionary<string, object?>
         {
             ["exitCode"] = exitCode,
             ["uptimeMs"] = _uptime.ElapsedMilliseconds,
         });
+        return exitCode;
+    }
+
+    /// <summary>
+    /// Ends when any task ends, and takes the others down with it. Waiting for all of them
+    /// would leave a half-dead engine running forever if just one of them failed.
+    /// </summary>
+    private async Task<int> RunUntilShutdownAsync(params Task[] tasks)
+    {
+        await Task.WhenAny(tasks).ConfigureAwait(false);
+        _shutdown.Cancel();
+
+        var exitCode = 0;
+        foreach (var task in tasks)
+        {
+            try
+            {
+                await task.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // The normal way for these tasks to finish.
+            }
+            catch (Exception exception)
+            {
+                _logger.Error(LogSource, "engine.failed", exception);
+                exitCode = 1;
+            }
+        }
         return exitCode;
     }
 
@@ -198,8 +215,9 @@ public sealed class EngineHost : IDisposable
             {
                 await server.SendEventAsync("state.changed", state, ProtocolJson.Default.EngineState, cancellationToken).ConfigureAwait(false);
             }
-            catch (IOException exception)
+            catch (Exception exception) when (exception is IOException or InvalidOperationException or ObjectDisposedException)
             {
+                // The client can vanish between the connection check and the write.
                 _logger.Warn("engine.ipc", "event.undeliverable", new Dictionary<string, object?> { ["message"] = exception.Message });
             }
         }
@@ -236,5 +254,4 @@ public sealed class EngineHost : IDisposable
         thread.Start();
     }
 
-    public void Dispose() => _shutdown.Dispose();
 }

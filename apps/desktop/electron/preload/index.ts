@@ -17,11 +17,23 @@ const api: AnimatedWallsApi = {
   settings: {
     get: () => ipcRenderer.invoke(IPC.settingsGet),
     set: (key, value) => ipcRenderer.invoke(IPC.settingsSet, key, value),
+    onChanged: (listener) => subscribe(IPC.settingsChangedEvent, listener),
   },
   wallpapers: {
     list: (query) => ipcRenderer.invoke(IPC.wallpapersList, query),
     importFromDialog: () => ipcRenderer.invoke(IPC.wallpapersImportDialog),
-    importDroppedFile: (file) => ipcRenderer.invoke(IPC.wallpapersImportPath, webUtils.getPathForFile(file)),
+    importDroppedFile: (file) => {
+      // Dragging an image out of a browser, for example, gives a File with no path on disk.
+      const path = webUtils.getPathForFile(file);
+      if (!path) {
+        return Promise.resolve({
+          status: 'rejected' as const,
+          fileName: file.name,
+          issues: [{ severity: 'error' as const, path: file.name, message: 'This item is not a file on this PC. Save it first, then import the saved file.' }],
+        });
+      }
+      return ipcRenderer.invoke(IPC.wallpapersImportPath, path);
+    },
     remove: (id) => ipcRenderer.invoke(IPC.wallpapersRemove, id),
     assign: (displayId, wallpaperId) => ipcRenderer.invoke(IPC.wallpapersAssign, displayId, wallpaperId),
     unassign: (displayId) => ipcRenderer.invoke(IPC.wallpapersUnassign, displayId),

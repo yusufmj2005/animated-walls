@@ -58,7 +58,7 @@ These need a person, or hardware that was not available during Sprint 01:
 | Multiple monitors, hotplug, mixed DPI | Connect a second display | Only one active display was available |
 | Windows 10 and pre-24H2 layouts | Run `--diagnose` and `--hosting-poc` | Not available |
 | Integrated GPU, hybrid laptops, Remote Desktop | Run `--diagnose` | Not available |
-| A machine with no GPU | Expect `unsupported` and the Home page warning | Not available. The policy is unit tested |
+| The Home page warning on a machine with no GPU | Expect the warning, with playback blocked | CI runners have no GPU, and the engine correctly reports `blocked` there, but the UI has not been seen in that state |
 | Tray icon and its menu | Right-click the icon | The icon's creation is logged and tested, but the shell's tray cannot be driven by the test tool |
 | The NSIS installer | Install and uninstall | It was built, but installing changes the machine |
 

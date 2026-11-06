@@ -76,6 +76,7 @@ export interface AnimatedWallsApi {
   settings: {
     get(): Promise<AppSettings>;
     set<K extends keyof AppSettings>(key: K, value: AppSettings[K]): Promise<AppSettings>;
+    onChanged(listener: (settings: AppSettings) => void): () => void;
   };
   wallpapers: {
     list(query?: WallpaperQuery): Promise<WallpaperRecord[]>;
@@ -103,6 +104,7 @@ export const IPC = {
   appOpenLogs: 'app:open-logs',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
+  settingsChangedEvent: 'settings:changed',
   wallpapersList: 'wallpapers:list',
   wallpapersImportDialog: 'wallpapers:import-dialog',
   wallpapersImportPath: 'wallpapers:import-path',

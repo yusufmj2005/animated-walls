@@ -58,6 +58,7 @@ const PREVIEW_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
 
 const ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
+const CONTROL_CHARS_EXCEPT_LINE_BREAKS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
 const KNOWN_TOP_LEVEL_KEYS = new Set([
   'formatVersion',
   'id',
@@ -97,6 +98,7 @@ function readText(
   maxLength: number,
   issues: Collector,
   required = true,
+  allowLineBreaks = false,
 ): string | undefined {
   const value = source[key];
   if (value === undefined) {
@@ -116,7 +118,7 @@ function readText(
     issues.error(path, 'too-long', `"${path}" must be at most ${maxLength} characters.`);
     return undefined;
   }
-  if (CONTROL_CHARS.test(trimmed)) {
+  if ((allowLineBreaks ? CONTROL_CHARS_EXCEPT_LINE_BREAKS : CONTROL_CHARS).test(trimmed)) {
     issues.error(path, 'control-characters', `"${path}" must not contain control characters.`);
     return undefined;
   }
@@ -220,7 +222,7 @@ export function parseManifest(input: string): ManifestResult {
   }
 
   const name = readText(root, 'name', 'name', 120, issues);
-  const description = readText(root, 'description', 'description', 2000, issues, false);
+  const description = readText(root, 'description', 'description', 2000, issues, false, true);
 
   let creator: WallpaperManifest['creator'] | undefined;
   const rawCreator = root['creator'];

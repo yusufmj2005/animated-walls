@@ -79,10 +79,10 @@ export class Logger {
 
   private write(level: LogLevel, source: string, event: string, data?: LogData): void {
     if (LEVEL_ORDER[level] < LEVEL_ORDER[this.level]) return;
-    const line = `${JSON.stringify({ ts: new Date().toISOString(), level, source, event, data: normalise(data) })}\n`;
-    if (this.fd === null) return;
     try {
-      const bytes = Buffer.from(line, 'utf8');
+      // Reopens after an earlier failure, so one bad moment does not end logging.
+      if (this.fd === null) this.open();
+      const bytes = Buffer.from(formatLine(level, source, event, data), 'utf8');
       this.rotateIfNeeded(bytes.length);
       if (this.fd === null) return;
       writeSync(this.fd, bytes);
@@ -115,6 +115,17 @@ export class Logger {
     if (this.reportedFailure) return;
     this.reportedFailure = true;
     console.error(`[logger] ${operation} failed:`, error);
+  }
+}
+
+function formatLine(level: LogLevel, source: string, event: string, data: LogData | undefined): string {
+  const entry = { ts: new Date().toISOString(), level, source, event };
+  try {
+    return `${JSON.stringify({ ...entry, data: normalise(data) })}\n`;
+  } catch (error) {
+    // Circular values and BigInts cannot be written. Logging must never throw at its caller,
+    // so the event is kept without its data.
+    return `${JSON.stringify({ ...entry, dataError: error instanceof Error ? error.message : String(error) })}\n`;
   }
 }
 

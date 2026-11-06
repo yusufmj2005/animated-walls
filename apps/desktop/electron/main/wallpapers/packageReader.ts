@@ -1,6 +1,6 @@
 import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 import yauzl from 'yauzl';
@@ -83,7 +83,7 @@ export class PackageReader {
     for (const { listing, zipEntry } of this.entries) {
       const target = resolve(join(root, listing.path));
       const escaped = relative(root, target);
-      if (escaped.startsWith('..') || escaped.includes(`..${sep}`) || resolve(root, escaped) !== target) {
+      if (escaped === '..' || escaped.startsWith(`..${sep}`) || isAbsolute(escaped)) {
         throw new PackageReadError(`Blocked a file path that leaves the package: ${listing.path}`);
       }
       if (listing.isDirectory) {

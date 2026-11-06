@@ -31,8 +31,9 @@ async function launch() {
 }
 
 async function quit(app) {
+  if (app.process().exitCode !== null) return;
   // Closing to the tray would keep the app alive, so quit the way the tray menu does.
-  const done = app.process().exitCode === null ? new Promise((resolve) => app.process().once('exit', resolve)) : Promise.resolve();
+  const done = new Promise((resolve) => app.process().once('exit', resolve));
   await app.evaluate(({ app: electronApp }) => electronApp.quit());
   await done;
 }
@@ -171,6 +172,63 @@ describe('Animated Walls', { concurrency: false }, () => {
     await page.getByRole('button', { name: 'Close details' }).click();
   });
 
+  it('imports a dropped file through the preload bridge', async () => {
+    const image = join(scratch, 'dropped-image.png');
+    writeFileSync(image, readFileSync(join(repoRoot, 'apps/desktop/resources/icons/app.png')));
+
+    // A real File with a real path, which is what a drag and drop delivers.
+    const input = await page.evaluateHandle(() => {
+      const element = document.createElement('input');
+      element.type = 'file';
+      element.style.display = 'none';
+      document.body.append(element);
+      return element;
+    });
+    await input.asElement().setInputFiles(image);
+    const result = await input.evaluate((element) => window.animatedWalls.wallpapers.importDroppedFile(element.files[0]));
+    assert.equal(result.status, 'imported');
+    assert.equal(result.wallpaper.name, 'dropped image');
+    assert.equal(result.wallpaper.width, 512, 'image size should be measured');
+    await page.evaluate(async (id) => window.animatedWalls.wallpapers.remove(id), result.wallpaper.id);
+    await input.evaluate((element) => element.remove());
+  });
+
+  it('gives a clear error when a dropped item has no file path', async () => {
+    const result = await page.evaluate(() => window.animatedWalls.wallpapers.importDroppedFile(new File(['x'], 'memory.png')));
+    assert.equal(result.status, 'rejected');
+    assert.match(result.issues[0].message, /not a file on this PC/);
+  });
+
+  it('stops decoding video while the app is hidden', async () => {
+    await page.getByTestId('wallpaper-card').filter({ hasText: /^sample/i }).click();
+    await page.getByTestId('details-panel').locator('video').waitFor();
+    await page.waitForFunction(() => !document.querySelector('[data-testid="details-panel"] video')?.paused);
+
+    // Playwright's focus emulation pins visibilityState to "visible" for as long as it is
+    // attached, so hiding the real window cannot be observed from here. The event is
+    // simulated instead. That a real hidden Electron window does report "hidden" was
+    // confirmed separately with no debugger attached.
+    const setVisibility = (state) => page.evaluate((value) => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, state);
+
+    await setVisibility('hidden');
+    await page.waitForFunction(() => {
+      const element = document.querySelector('[data-testid="details-panel"] video');
+      return !element || element.paused;
+    }, undefined, { polling: 100, timeout: 5000 });
+
+    await setVisibility('visible');
+    await page.waitForFunction(() => {
+      const element = document.querySelector('[data-testid="details-panel"] video');
+      return element && !element.paused;
+    }, undefined, { polling: 100, timeout: 5000 });
+
+    await page.evaluate(() => delete document.visibilityState);
+    await page.getByRole('button', { name: 'Close details' }).click();
+  });
+
   it('rejects hostile files with a clear reason and imports nothing', async () => {
     const before = (await page.evaluate(() => window.animatedWalls.wallpapers.list())).length;
 
@@ -295,6 +353,36 @@ describe('Animated Walls', { concurrency: false }, () => {
     console.log(`  visibility: ${initial.state} -> covered -> ${primaryOf(restored).visibility.state}; evaluations ${before.health.counters.visibilityEvaluations} -> ${restored.health.counters.visibilityEvaluations}`);
   });
 
+  it('tells the UI when a setting changes elsewhere, such as from the tray', async () => {
+    await nav(page, 'Settings');
+    const pauseSwitch = page.getByRole('switch', { name: 'Pause all wallpapers' });
+    assert.equal(await pauseSwitch.getAttribute('aria-checked'), 'false');
+
+    // Called directly rather than through the store, which is exactly the tray's position:
+    // the only thing that can update the switch is the broadcast.
+    await page.evaluate(() => window.animatedWalls.settings.set('pausePlayback', true));
+    await page.waitForFunction(() => document.querySelector('[role="switch"][aria-label="Pause all wallpapers"]').getAttribute('aria-checked') === 'true');
+
+    await pauseSwitch.click();
+    await page.waitForFunction(async () => (await window.animatedWalls.settings.get()).pausePlayback === false);
+  });
+
+  it('saves a setting even when the engine is down, and shows no stale displays', async () => {
+    await nav(page, 'Displays');
+    await page.getByTestId('display-name').first().waitFor();
+
+    const { health } = await page.evaluate(() => window.animatedWalls.engine.getStatus());
+    process.kill(health.pid);
+
+    await page.getByTestId('engine-status').getByText('Engine restarting').waitFor({ timeout: 5000 });
+    await page.getByText('No displays to show').waitFor({ timeout: 2000 });
+    const saved = await page.evaluate(() => window.animatedWalls.settings.set('frameRateLimit', 30).then((value) => value.frameRateLimit, (error) => String(error)));
+    assert.equal(saved, 30);
+
+    await page.getByTestId('engine-status').getByText('Engine running').waitFor({ timeout: 15_000 });
+    await page.getByTestId('display-name').first().waitFor({ timeout: 5000 });
+  });
+
   describe('security', () => {
     it('gives the renderer no Node.js and only the typed API', async () => {
       const surface = await page.evaluate(() => ({
@@ -405,6 +493,19 @@ describe('Animated Walls', { concurrency: false }, () => {
     await page.getByRole('region', { name: 'Current wallpaper' }).getByText('Aurora Drift').waitFor();
   });
 
+  it('removes a wallpaper while its video is playing', async () => {
+    await nav(page, 'Library');
+    await page.getByTestId('wallpaper-card').filter({ hasText: /^sample/i }).click();
+    await page.getByTestId('details-panel').locator('video').waitFor();
+    await page.getByTestId('remove-button').click();
+    await page.getByTestId('confirm-remove').click();
+    await page.getByTestId('notice').getByText('Removed').first().waitFor();
+    await dismissNotices(page);
+
+    const records = await page.evaluate(() => window.animatedWalls.wallpapers.list());
+    assert.equal(records.some((record) => record.type === 'video'), false);
+  });
+
   it('wrote structured logs for the required lifecycle events', () => {
     const app = logEvents('app.log').map((line) => line.event);
     const engine = logEvents('engine.log').map((line) => line.event);
@@ -425,5 +526,29 @@ describe('Animated Walls', { concurrency: false }, () => {
     const appLog = readFileSync(join(userData, 'logs', 'app.log'), 'utf8');
     const engineLog = readFileSync(join(userData, 'logs', 'engine.log'), 'utf8');
     assert.doesNotMatch(appLog + engineLog, /[A-Za-z0-9+/]{43}=/);
+  });
+
+  it('quits when closed with "keep running in the tray" turned off', async () => {
+    const { health } = await page.evaluate(() => window.animatedWalls.engine.getStatus());
+    await page.evaluate(() => window.animatedWalls.settings.set('closeToTray', false));
+    const exited = new Promise((resolve) => app.process().once('exit', resolve));
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    await Promise.race([exited, new Promise((_, fail) => setTimeout(() => fail(new Error('The app kept running after its window closed.')), 8000))]);
+    assert.equal(isRunning(health.pid), false, 'the engine must stop with the app');
+  });
+
+  it('survives being asked to quit twice', async () => {
+    ({ app, page } = await launch());
+    await page.getByTestId('engine-status').getByText('Engine running').waitFor({ timeout: 20_000 });
+    const exited = new Promise((resolve) => app.process().once('exit', resolve));
+    await app.evaluate(({ app: electronApp }) => {
+      electronApp.quit();
+      electronApp.quit();
+    }).catch(() => {});
+    const code = await exited;
+    assert.equal(code, 0);
+    const events = logEvents('app.log').map((line) => line.event);
+    assert.equal(events.includes('app.fatal'), false);
+    assert.equal(events.at(-1), 'app.shutdown');
   });
 });

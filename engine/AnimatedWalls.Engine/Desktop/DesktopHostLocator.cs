@@ -53,7 +53,7 @@ public static unsafe class DesktopHostLocator
         var progmanEx = (uint)(long)User32.GetWindowLongPtr(progman, User32.GWL_EXSTYLE);
         var noRedirection = (progmanEx & User32.WS_EX_NOREDIRECTIONBITMAP) != 0;
         var defViewLayered = defView != 0 && ((uint)(long)User32.GetWindowLongPtr(defView, User32.GWL_EXSTYLE) & User32.WS_EX_LAYERED) != 0;
-        var layout = ClassifyLayout(defView != 0, parent == progman);
+        var layout = ClassifyLayout(defView != 0, parent == progman, IsCompositedProgman(progman));
         var hasHost = layout == DesktopLayout.ProgmanChild
             ? User32.FindWindowEx(progman, 0, "WorkerW", null) != 0
             : layout == DesktopLayout.WorkerWSibling && FindEmptyWorkerW() != 0;
@@ -74,10 +74,21 @@ public static unsafe class DesktopHostLocator
         return new DesktopHostProbe(layoutName, true, parent != 0 ? User32.ClassNameOf(parent) : null, noRedirection, defViewLayered, hasHost, notes);
     }
 
-    internal static DesktopLayout ClassifyLayout(bool defViewFound, bool defViewIsChildOfProgman)
+    /// <summary>
+    /// Icons under Progman alone do not mean the current layout. On Windows 10 every session
+    /// starts that way, and the icons only move to a WorkerW after message 0x052C. What marks
+    /// the current layout is Progman itself being composited, or holding a child WorkerW.
+    /// </summary>
+    internal static DesktopLayout ClassifyLayout(bool defViewFound, bool defViewIsChildOfProgman, bool progmanIsComposited)
     {
         if (!defViewFound) return DesktopLayout.Unavailable;
-        return defViewIsChildOfProgman ? DesktopLayout.ProgmanChild : DesktopLayout.WorkerWSibling;
+        return defViewIsChildOfProgman && progmanIsComposited ? DesktopLayout.ProgmanChild : DesktopLayout.WorkerWSibling;
+    }
+
+    private static bool IsCompositedProgman(nint progman)
+    {
+        var exStyle = (uint)(long)User32.GetWindowLongPtr(progman, User32.GWL_EXSTYLE);
+        return (exStyle & User32.WS_EX_NOREDIRECTIONBITMAP) != 0 || User32.FindWindowEx(progman, 0, "WorkerW", null) != 0;
     }
 
     /// <summary>Asks Explorer for its wallpaper host window, then locates it.</summary>
@@ -92,7 +103,7 @@ public static unsafe class DesktopHostLocator
         User32.SendMessageTimeout(progman, WM_SPAWN_WORKER, 0, 0, User32.SMTO_NORMAL, SpawnTimeoutMs, out _);
 
         var (defView, parent) = FindDefView(progman);
-        var layout = ClassifyLayout(defView != 0, parent == progman);
+        var layout = ClassifyLayout(defView != 0, parent == progman, IsCompositedProgman(progman));
         var worker = layout switch
         {
             DesktopLayout.ProgmanChild => User32.FindWindowEx(progman, 0, "WorkerW", null),

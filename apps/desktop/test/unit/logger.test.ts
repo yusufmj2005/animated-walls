@@ -52,6 +52,17 @@ describe('Logger', () => {
     expect(lines().at(-1)).toContain('"index":99');
   });
 
+  it('never throws on data that cannot be serialised', () => {
+    const logger = new Logger({ directory: directory.path });
+    const circular: Record<string, unknown> = {};
+    circular['self'] = circular;
+    expect(() => logger.info('s', 'circular', { circular })).not.toThrow();
+    expect(() => logger.info('s', 'bigint', { value: 10n })).not.toThrow();
+    logger.info('s', 'after');
+    logger.close();
+    expect(lines().at(-1)).toContain('after');
+  });
+
   it('continues an existing file after a restart', () => {
     const first = new Logger({ directory: directory.path });
     first.info('s', 'one');

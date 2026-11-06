@@ -215,3 +215,23 @@ public class PlaybackCoordinatorTests
         Assert.Equal(RenderDecisions.Render, coordinator.SetPaused(false).Render[0].Decision);
     }
 }
+
+public class DesktopLayoutTests
+{
+    [Fact]
+    public void No_icon_window_means_no_layout() =>
+        Assert.Equal(AnimatedWalls.Engine.Desktop.DesktopLayout.Unavailable, AnimatedWalls.Engine.Desktop.DesktopHostLocator.ClassifyLayout(false, false, false));
+
+    [Fact]
+    public void Icons_in_a_WorkerW_are_the_classic_layout() =>
+        Assert.Equal(AnimatedWalls.Engine.Desktop.DesktopLayout.WorkerWSibling, AnimatedWalls.Engine.Desktop.DesktopHostLocator.ClassifyLayout(true, false, false));
+
+    [Fact]
+    public void Icons_in_a_composited_Progman_are_the_current_layout() =>
+        Assert.Equal(AnimatedWalls.Engine.Desktop.DesktopLayout.ProgmanChild, AnimatedWalls.Engine.Desktop.DesktopHostLocator.ClassifyLayout(true, true, true));
+
+    [Fact]
+    public void Icons_in_an_ordinary_Progman_are_classic_before_the_WorkerW_is_spawned() =>
+        // Windows 10 starts every session this way, until something sends message 0x052C.
+        Assert.Equal(AnimatedWalls.Engine.Desktop.DesktopLayout.WorkerWSibling, AnimatedWalls.Engine.Desktop.DesktopHostLocator.ClassifyLayout(true, true, false));
+}

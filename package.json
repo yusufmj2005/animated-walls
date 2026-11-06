@@ -22,7 +22,7 @@
     "test:ts": "vitest run",
     "test:engine": "dotnet test --solution engine/AnimatedWalls.Engine.slnx --filter-not-trait \"Category=Desktop\"",
     "test:engine:desktop": "dotnet test --solution engine/AnimatedWalls.Engine.slnx --filter-trait \"Category=Desktop\"",
-    "test:e2e": "npm run build && npm run test:e2e -w @animated-walls/desktop",
+    "test:e2e": "npm run samples && npm run build && npm run test:e2e -w @animated-walls/desktop",
     "package": "npm run build && npm run package -w @animated-walls/desktop",
     "package:dir": "npm run build && npm run package:dir -w @animated-walls/desktop",
     "samples": "node scripts/create-samples.mjs",

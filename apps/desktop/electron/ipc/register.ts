@@ -15,6 +15,7 @@ export interface IpcServices {
   setSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => Promise<AppSettings>;
   importFromDialog: () => Promise<ImportResult>;
   listAssignments: () => DisplayAssignmentRecord[];
+  syncAssignments: () => Promise<DisplayAssignmentRecord[]>;
   assign: (displayId: string, wallpaperId: string) => Promise<DisplayAssignmentRecord[]>;
   unassign: (displayId: string) => Promise<DisplayAssignmentRecord[]>;
 }
@@ -89,7 +90,7 @@ export function registerIpcHandlers(services: IpcServices): void {
   handle(IPC.wallpapersImportPath, (path: unknown) => library.importPath(requireString(path, 'path', 32_767)));
   handle(IPC.wallpapersRemove, async (id: unknown) => {
     await library.remove(requireString(id, 'id', 64));
-    await pushAssignments(services);
+    await services.syncAssignments();
   });
   handle(IPC.wallpapersAssign, (displayId: unknown, wallpaperId: unknown) =>
     services.assign(requireString(displayId, 'displayId', 512), requireString(wallpaperId, 'wallpaperId', 64)),
@@ -102,10 +103,4 @@ export function registerIpcHandlers(services: IpcServices): void {
   handle(IPC.engineGetCapabilities, () => (engine.status.connection === 'connected' ? engine.call('engine.capabilities') : null));
   handle(IPC.engineGetDiagnostics, () => (engine.status.connection === 'connected' ? engine.call('engine.diagnostics') : null));
   handle(IPC.engineRestart, () => engine.restart());
-}
-
-async function pushAssignments(services: IpcServices): Promise<void> {
-  if (services.engine.status.connection !== 'connected') return;
-  const assignments = services.listAssignments().map(({ displayId, wallpaperId }) => ({ displayId, wallpaperId }));
-  await services.engine.call('playback.setAssignments', { assignments });
 }

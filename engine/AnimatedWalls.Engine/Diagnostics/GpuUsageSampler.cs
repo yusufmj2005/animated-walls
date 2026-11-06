@@ -79,6 +79,9 @@ public static unsafe class GpuUsageSampler
             var items = (CounterValueItem*)pointer;
             for (var index = 0; index < count; index++)
             {
+                // Status 0 and 1 are PDH's valid-data codes. A process exiting mid-sample leaves
+                // instances with an error status, and their value means nothing.
+                if (items[index].Status > 1) continue;
                 var name = new string(items[index].Name);
                 var value = items[index].Value;
                 if (name.EndsWith("engtype_3D", StringComparison.OrdinalIgnoreCase)) engine3D += value;

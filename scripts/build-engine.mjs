@@ -22,7 +22,13 @@ if (dotnet === defaultDotnet && !existsSync(defaultDotnet)) {
   process.exit(1);
 }
 
-rmSync(output, { recursive: true, force: true });
+try {
+  rmSync(output, { recursive: true, force: true });
+} catch (error) {
+  console.error(`[build-engine] ${output} could not be replaced: ${error.message}`);
+  console.error('[build-engine] Quit Animated Walls from its tray icon, then try again.');
+  process.exit(1);
+}
 
 const args = [
   'publish', project,
