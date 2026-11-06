@@ -32,6 +32,8 @@ public static class RenderPolicy
 
         if (inputs.Session.SystemSuspended) return (RenderDecisions.Suspended, RenderReasons.SystemSuspended);
         if (inputs.Session.Locked) return (RenderDecisions.Suspended, RenderReasons.SessionLocked);
+        if (inputs.Session.SessionDisconnected) return (RenderDecisions.Suspended, RenderReasons.SessionDisconnected);
+        if (inputs.Session.ScreenSaverRunning) return (RenderDecisions.Suspended, RenderReasons.ScreenSaver);
         if (inputs.Session.DisplayPower == DisplayPowerStates.Off) return (RenderDecisions.Suspended, RenderReasons.DisplayOff);
         if (inputs.UserPaused) return (RenderDecisions.Suspended, RenderReasons.UserPaused);
         if (inputs.PauseOnBattery && inputs.Session.OnBattery) return (RenderDecisions.Suspended, RenderReasons.OnBattery);

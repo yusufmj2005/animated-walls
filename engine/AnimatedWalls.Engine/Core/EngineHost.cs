@@ -34,6 +34,13 @@ public sealed class EngineHost
         SingleReader = true,
     });
 
+    private readonly Channel<GpuCapabilities> _gpuEvents = Channel.CreateBounded<GpuCapabilities>(new BoundedChannelOptions(1)
+    {
+        FullMode = BoundedChannelFullMode.DropOldest,
+        SingleReader = true,
+    });
+    private volatile GpuCapabilities? _gpu;
+
     public EngineHost(string pipeName, Stream stdin, StructuredLogger logger)
     {
         _pipeName = pipeName;
@@ -52,13 +59,17 @@ public sealed class EngineHost
             ["rendererImplemented"] = EngineInfo.RendererImplemented,
         });
 
-        var gpu = DetectGpu();
-        var coordinator = new PlaybackCoordinator(_logger, _counters, gpu);
+        _gpu = DetectGpu();
+        var coordinator = new PlaybackCoordinator(_logger, _counters, _gpu);
         coordinator.StateChanged += state => _stateEvents.Writer.TryWrite(state);
 
         using var pump = new DesktopSignalPump(_logger, _counters);
         var monitor = new VisibilityMonitor(pump, coordinator, _counters, _logger);
         monitor.Subscribe();
+        // A driver update, a new GPU and Remote Desktop all change what hardware is usable, and
+        // each of them either changes the displays or reconnects the session.
+        pump.DisplaysDirty += () => RedetectGpu(coordinator);
+        pump.SessionConnectionChanged += () => RedetectGpu(coordinator);
         pump.SessionEnding += () =>
         {
             _logger.Info(LogSource, "engine.session-ending");
@@ -67,7 +78,7 @@ public sealed class EngineHost
         await pump.StartAsync().ConfigureAwait(false);
 
         var dispatcher = new RpcDispatcher();
-        RegisterMethods(dispatcher, coordinator, gpu);
+        RegisterMethods(dispatcher, coordinator);
 
         using var server = new PipeServer(_pipeName, new SessionAuthenticator(token), dispatcher, _logger);
         server.ClientDisconnected += () =>
@@ -88,7 +99,8 @@ public sealed class EngineHost
         var serverTask = server.RunAsync(_shutdown.Token);
         var eventsTask = ForwardEventsAsync(server, _shutdown.Token);
 
-        var exitCode = await RunUntilShutdownAsync(serverTask, eventsTask).ConfigureAwait(false);
+        var gpuEventsTask = ForwardGpuEventsAsync(server, _shutdown.Token);
+        var exitCode = await RunUntilShutdownAsync(serverTask, eventsTask, gpuEventsTask).ConfigureAwait(false);
 
         _logger.Info(LogSource, "engine.exit", new Dictionary<string, object?>
         {
@@ -156,17 +168,37 @@ public sealed class EngineHost
         }
     }
 
-    private void RegisterMethods(RpcDispatcher dispatcher, PlaybackCoordinator coordinator, GpuCapabilities gpu)
+    private void RedetectGpu(PlaybackCoordinator coordinator)
+    {
+        var previous = _gpu!;
+        var next = DetectGpu();
+        var same = previous.Status == next.Status
+            && previous.SelectedAdapter?.Luid == next.SelectedAdapter?.Luid
+            && previous.Adapters.Count == next.Adapters.Count;
+        if (same) return;
+
+        _logger.Info("engine.rendering", "gpu.changed", new Dictionary<string, object?>
+        {
+            ["from"] = previous.SelectedAdapter?.Name,
+            ["to"] = next.SelectedAdapter?.Name,
+            ["status"] = next.Status,
+        });
+        _gpu = next;
+        coordinator.UpdateGpu(next);
+        _gpuEvents.Writer.TryWrite(next);
+    }
+
+    private void RegisterMethods(RpcDispatcher dispatcher, PlaybackCoordinator coordinator)
     {
         var json = ProtocolJson.Default;
 
         dispatcher.Register("engine.health", json.EngineHealth, ReadHealth);
-        dispatcher.Register("engine.capabilities", json.GpuCapabilities, () => gpu);
+        dispatcher.Register("engine.capabilities", json.GpuCapabilities, () => _gpu!);
         dispatcher.Register("engine.state", json.EngineState, () => coordinator.Current);
         dispatcher.Register("engine.diagnostics", json.EngineDiagnostics, () => new EngineDiagnostics(
             ReadHealth(),
             coordinator.Current,
-            gpu,
+            _gpu!,
             GpuUsageSampler.Sample(Environment.ProcessId, GpuUsageWindow),
             DesktopHostLocator.Probe(),
             _logger.FilePath));
@@ -205,6 +237,21 @@ public sealed class EngineHost
             process.Threads.Count,
             EngineInfo.RendererImplemented,
             _counters.Snapshot());
+    }
+
+    private async Task ForwardGpuEventsAsync(PipeServer server, CancellationToken cancellationToken)
+    {
+        await foreach (var gpu in _gpuEvents.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            try
+            {
+                await server.SendEventAsync("gpu.changed", gpu, ProtocolJson.Default.GpuCapabilities, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is IOException or InvalidOperationException or ObjectDisposedException)
+            {
+                _logger.Warn("engine.ipc", "event.undeliverable", new Dictionary<string, object?> { ["message"] = exception.Message });
+            }
+        }
     }
 
     private async Task ForwardEventsAsync(PipeServer server, CancellationToken cancellationToken)

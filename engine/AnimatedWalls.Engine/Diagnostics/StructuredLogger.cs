@@ -29,6 +29,7 @@ public sealed class StructuredLogger : IDisposable
     private readonly int _maxFiles;
     private FileStream? _stream;
     private bool _reportedFailure;
+    private bool _disposed;
     private volatile LogLevel _level;
 
     public string? FilePath { get; }
@@ -93,6 +94,8 @@ public sealed class StructuredLogger : IDisposable
 
         lock (_gate)
         {
+            if (_disposed) return;
+
             if (FilePath is null)
             {
                 Console.Error.WriteLine(line);
@@ -182,6 +185,7 @@ public sealed class StructuredLogger : IDisposable
     {
         lock (_gate)
         {
+            _disposed = true;
             _stream?.Dispose();
             _stream = null;
         }

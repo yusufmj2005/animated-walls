@@ -1,16 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { copyFile, mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
+import { access, copyFile, mkdir, open, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, resolve, sep, win32 } from 'node:path';
 import type { ImportIssue, ImportResult, WallpaperRecord } from '@animated-walls/shared-types';
 import {
   CURRENT_FORMAT_VERSION,
   DEFAULT_PACKAGE_LIMITS,
+  IMAGE_HEADER_BYTES,
   PACKAGE_EXTENSION,
   SNIFF_BYTES,
   mediaKindFromPath,
   parseManifest,
+  readImageSize,
   sniffMediaKind,
+  stripUnsafeText,
   validatePackageListing,
   type MediaKind,
   type ValidationIssue,
@@ -24,6 +27,7 @@ const LOG_SOURCE = 'app.library';
 const STAGING_DIRECTORY = '.staging';
 const VIDEO_KINDS: readonly MediaKind[] = ['mp4', 'webm'];
 const IMAGE_KINDS: readonly MediaKind[] = ['png', 'jpeg', 'webp'];
+const REMOVAL_MARKER = '.removed';
 const WALLPAPER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // A video being previewed can hold its file open for a moment after it is unmounted.
 const REMOVE_RETRIES = { maxRetries: 5, retryDelay: 100 };
@@ -41,17 +45,10 @@ export interface ResolvedMedia {
   kind: MediaKind;
 }
 
-export interface ImageSize {
-  width: number;
-  height: number;
-}
-
 export interface LibraryOptions {
   root: string;
   repository: WallpaperRepository;
   logger: Logger;
-  /** Reads an image's pixel size. Injected so this class stays free of Electron. */
-  measureImage?: (path: string) => ImageSize | null;
 }
 
 class ImportRejected extends Error {
@@ -77,13 +74,11 @@ export class WallpaperLibrary {
   private readonly root: string;
   private readonly repository: WallpaperRepository;
   private readonly logger: Logger;
-  private readonly measureImage: LibraryOptions['measureImage'];
 
   constructor(options: LibraryOptions) {
     this.root = resolve(options.root);
     this.repository = options.repository;
     this.logger = options.logger;
-    this.measureImage = options.measureImage;
   }
 
   /** Clears what an interrupted import or a failed removal left behind. */
@@ -92,8 +87,15 @@ export class WallpaperLibrary {
     await rm(join(this.root, STAGING_DIRECTORY), { recursive: true, force: true });
 
     for (const id of await this.findOrphans()) {
-      this.logger.warn(LOG_SOURCE, 'library.orphan-removed', { id });
-      await rm(this.directoryOf(id), { recursive: true, force: true, ...REMOVE_RETRIES });
+      // Files are only ever deleted when a removal was started and marked. A folder with no
+      // database row is not enough: if the database was reset or restored from a backup, those
+      // folders are the user's wallpapers, and deleting them could not be undone.
+      if (await exists(join(this.directoryOf(id), REMOVAL_MARKER))) {
+        this.logger.info(LOG_SOURCE, 'library.finished-removal', { id });
+        await rm(this.directoryOf(id), { recursive: true, force: true, ...REMOVE_RETRIES });
+      } else {
+        this.logger.warn(LOG_SOURCE, 'library.orphan-kept', { id });
+      }
     }
   }
 
@@ -196,7 +198,7 @@ export class WallpaperLibrary {
       await copyFile(path, join(staging, entryPath));
 
       const isVideo = VIDEO_KINDS.includes(actual);
-      const size = isVideo ? null : (this.measureImage?.(join(staging, entryPath)) ?? null);
+      const size = isVideo ? null : await readFileImageSize(join(staging, entryPath));
 
       const manifest: WallpaperManifest = {
         formatVersion: CURRENT_FORMAT_VERSION,
@@ -256,10 +258,18 @@ export class WallpaperLibrary {
   }
 
   async remove(id: string): Promise<boolean> {
-    const removed = this.repository.delete(id);
-    if (!removed) return false;
+    if (!this.repository.find(id)) return false;
+
+    // Marked first, so an interruption at any later point can be finished on the next start.
+    // The marker alone never deletes anything while the database row still exists.
+    const directory = this.directoryOf(id);
+    await writeFile(join(directory, REMOVAL_MARKER), '').catch((error: unknown) => {
+      this.logger.warn(LOG_SOURCE, 'wallpaper.marker-failed', { id, error });
+    });
+
+    this.repository.delete(id);
     try {
-      await rm(this.directoryOf(id), { recursive: true, force: true, ...REMOVE_RETRIES });
+      await rm(directory, { recursive: true, force: true, ...REMOVE_RETRIES });
     } catch (error) {
       // The wallpaper is already gone from the library, so this is not a failure the user
       // can act on. A file was held open, and the folder is cleared on the next start.
@@ -348,6 +358,27 @@ async function sniffFile(path: string): Promise<MediaKind | null> {
   }
 }
 
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Header parsing only: pixels from an untrusted file are never decoded in this process. */
+async function readFileImageSize(path: string) {
+  const handle = await open(path, 'r');
+  try {
+    const buffer = Buffer.alloc(IMAGE_HEADER_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, IMAGE_HEADER_BYTES, 0);
+    return readImageSize(buffer.subarray(0, bytesRead));
+  } finally {
+    await handle.close();
+  }
+}
+
 async function hashFile(path: string): Promise<string> {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
@@ -370,7 +401,7 @@ async function verifyManifestMedia(manifest: WallpaperManifest, directory: strin
 }
 
 function cleanDisplayName(fileName: string): string {
-  const stem = fileName.replace(/\.[^.]+$/, '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '');
+  const stem = stripUnsafeText(fileName.replace(/\.[^.]+$/, ''));
   const pretty = stem.replace(/[_-]+/g, ' ').trim();
   return (pretty || 'Untitled wallpaper').slice(0, 120);
 }

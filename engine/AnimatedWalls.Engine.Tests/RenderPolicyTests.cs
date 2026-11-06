@@ -46,6 +46,14 @@ public class RenderPolicyTests
         Assert.Equal((RenderDecisions.Suspended, RenderReasons.SessionLocked), Decide(session: Normal with { Locked = true }));
 
     [Fact]
+    public void A_disconnected_session_suspends() =>
+        Assert.Equal((RenderDecisions.Suspended, RenderReasons.SessionDisconnected), Decide(session: Normal with { SessionDisconnected = true }));
+
+    [Fact]
+    public void A_running_screen_saver_suspends() =>
+        Assert.Equal((RenderDecisions.Suspended, RenderReasons.ScreenSaver), Decide(session: Normal with { ScreenSaverRunning = true }));
+
+    [Fact]
     public void Display_off_suspends() =>
         Assert.Equal((RenderDecisions.Suspended, RenderReasons.DisplayOff), Decide(session: Normal with { DisplayPower = DisplayPowerStates.Off }));
 
@@ -179,6 +187,35 @@ public class PlaybackCoordinatorTests
             coordinator.UpdateVisibility([Vis(VisibilityStates.Partial, 0.500 + step * 0.001)]);
         }
         Assert.Empty(events);
+    }
+
+    [Fact]
+    public void A_slow_drag_still_reaches_the_client_as_it_adds_up()
+    {
+        var (coordinator, _, events) = Create();
+        coordinator.UpdateVisibility([Vis(VisibilityStates.Partial, 0.20)]);
+        events.Clear();
+
+        for (var step = 1; step <= 70; step++)
+        {
+            coordinator.UpdateVisibility([Vis(VisibilityStates.Partial, Math.Round(0.20 + step * 0.01, 2))]);
+        }
+
+        Assert.NotEmpty(events);
+        Assert.True(Math.Abs(events[^1].Visibility[0].VisibleFraction - 0.90) < 0.05);
+    }
+
+    [Fact]
+    public void A_gpu_appearing_unblocks_an_assigned_display_and_losing_it_blocks_again()
+    {
+        var (coordinator, _, _) = Create(Unsupported);
+        Assert.Equal(RenderDecisions.Blocked, coordinator.Current.Render[0].Decision);
+
+        coordinator.UpdateGpu(Supported);
+        Assert.Equal(RenderDecisions.Render, coordinator.Current.Render[0].Decision);
+
+        coordinator.UpdateGpu(Unsupported);
+        Assert.Equal(RenderDecisions.Blocked, coordinator.Current.Render[0].Decision);
     }
 
     [Fact]

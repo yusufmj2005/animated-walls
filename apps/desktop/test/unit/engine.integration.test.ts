@@ -176,6 +176,23 @@ describe.skipIf(!enginePath)('engine over named pipe', () => {
       await until(() => spawnedPids().filter(isRunning).length === 1, 8000);
     });
 
+    it('starts nothing once shut down, even mid-restart', async () => {
+      await supervisor.start();
+      const restarting = supervisor.restart();
+      await supervisor.shutdown();
+      await restarting;
+      expect(supervisor.status.connection).toBe('stopped');
+      await supervisor.start();
+      expect(supervisor.status.connection).toBe('stopped');
+      await until(() => spawnedPids().filter(isRunning).length === 0, 8000);
+    });
+
+    it('sends empty fields as null, as the contract says', async () => {
+      await supervisor.start();
+      const state = await supervisor.call('engine.state');
+      expect(state.render[0]!.wallpaperId).toBeNull();
+    });
+
     it('does not connect after being stopped during startup', async () => {
       const starting = supervisor.start();
       await supervisor.stop();
@@ -195,7 +212,7 @@ describe.skipIf(!enginePath)('engine over named pipe', () => {
       const missing = new EngineSupervisor({ enginePath: join(directory.path, 'nothing.exe'), logDirectory: directory.path, logLevel: 'info', logger });
       await missing.start();
       expect(missing.status.connection).toBe('failed');
-      expect(missing.status.lastError).toMatch(/not found/);
+      expect(missing.status.lastError).toMatch(/missing from/);
     });
 
     it('writes structured engine logs', async () => {

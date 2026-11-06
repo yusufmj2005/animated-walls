@@ -44,8 +44,9 @@ public sealed record DiagnoseReport(
 
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-    PropertyNameCaseInsensitive = false,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+    // Nulls are written, because the TypeScript contract types these fields as "| null" and
+    // an omitted field arrives as undefined, which passes a check like "!== null".
+    PropertyNameCaseInsensitive = false)]
 [JsonSerializable(typeof(RpcRequest))]
 [JsonSerializable(typeof(RpcResponse))]
 [JsonSerializable(typeof(RpcEvent))]

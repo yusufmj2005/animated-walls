@@ -135,6 +135,24 @@ describe('WallpaperLibrary', () => {
       await expectRejected(await writePackage([{ name: 'manifest.json', content: JSON.stringify(manifest) }, { name: 'clip.mp4', content: 'MZ not a video' }, { name: 'preview.png', content: PNG_BYTES }]), /does not contain MP4 or WebM/);
     });
 
+    it('reports a damaged package as a rejection and leaves nothing behind', async () => {
+      const path = await writePackage([
+        { name: 'manifest.json', content: JSON.stringify(VALID_MANIFEST) },
+        { name: 'index.html', content: 'a'.repeat(200_000) },
+        { name: 'preview.png', content: PNG_BYTES },
+      ]);
+      const bytes = readFileSync(path);
+      const nameAt = bytes.indexOf(Buffer.from('index.html'));
+      bytes.fill(0xff, nameAt + 20, nameAt + 60);
+      writeFileSync(path, bytes);
+      await expectRejected(path, /package is damaged.*index\.html/);
+    });
+
+    it('rejects too many files before reading the file list', async () => {
+      const many = Array.from({ length: 10_001 }, (_, index) => ({ name: `f${index}.js`, content: '' }));
+      await expectRejected(await writePackage(many), /at most 10000 files/);
+    });
+
     it('rejects names that collide on a case-insensitive filesystem', async () => {
       await expectRejected(await writePackage([...validPackageEntries(), { name: 'INDEX.HTML', content: 'x' }]), /more than once/);
     });
@@ -158,6 +176,19 @@ describe('WallpaperLibrary', () => {
         expect(result.wallpaper.type).toBe(type);
         expect(result.wallpaper.source).toBe('media-file');
       }
+    });
+
+    it('reads image dimensions from the file header', async () => {
+      const png = Buffer.concat([PNG_BYTES, Buffer.from([0, 0, 0x0a, 0, 0, 0, 0x05, 0xa0])]);
+      const result = await library.importPath(writeFile('sized.png', png));
+      if (result.status !== 'imported') throw new Error('import failed');
+      expect([result.wallpaper.width, result.wallpaper.height]).toEqual([2560, 1440]);
+    });
+
+    it('removes characters from a file name that would disguise it', async () => {
+      const result = await library.importPath(writeFile('photo\u202Egnp.png', PNG_BYTES));
+      if (result.status !== 'imported') throw new Error('import failed');
+      expect(result.wallpaper.name).toBe('photognp');
     });
 
     it('builds a readable name from the file name', async () => {
@@ -244,17 +275,46 @@ describe('WallpaperLibrary', () => {
     expect(existsSync(stale)).toBe(false);
   });
 
-  it('clears wallpaper directories with no database row, and nothing else', async () => {
-    mkdirSync(join(root, '00000000-0000-0000-0000-000000000009'));
-    mkdirSync(join(root, 'not-one-of-ours'));
-    const kept = await library.importPath(writeFile('kept.png', PNG_BYTES));
-    if (kept.status !== 'imported') throw new Error('import failed');
+  describe('at startup', () => {
+    const id = '00000000-0000-0000-0000-000000000009';
 
-    await library.initialise();
+    it('keeps wallpaper files when the database no longer knows them', async () => {
+      // A deleted database or a restored backup must not cost the user their wallpapers.
+      const result = await library.importPath(writeFile('kept.png', PNG_BYTES));
+      if (result.status !== 'imported') throw new Error('import failed');
 
-    expect(existsSync(join(root, '00000000-0000-0000-0000-000000000009'))).toBe(false);
-    expect(existsSync(join(root, 'not-one-of-ours'))).toBe(true);
-    expect(existsSync(join(root, kept.wallpaper.id))).toBe(true);
+      const resetDb = openDatabase(':memory:').db;
+      try {
+        const reopened = new WallpaperLibrary({ root, repository: new WallpaperRepository(resetDb), logger });
+        await reopened.initialise();
+        expect(existsSync(join(root, result.wallpaper.id, 'media.png'))).toBe(true);
+      } finally {
+        resetDb.close();
+      }
+    });
+
+    it('finishes a removal that was interrupted', async () => {
+      mkdirSync(join(root, id));
+      writeFileSync(join(root, id, '.removed'), '');
+      await library.initialise();
+      expect(existsSync(join(root, id))).toBe(false);
+    });
+
+    it('never deletes a wallpaper that is still in the database, even if marked', async () => {
+      const result = await library.importPath(writeFile('live.png', PNG_BYTES));
+      if (result.status !== 'imported') throw new Error('import failed');
+      writeFileSync(join(root, result.wallpaper.id, '.removed'), '');
+      await library.initialise();
+      expect(library.get(result.wallpaper.id)).not.toBeNull();
+      expect(existsSync(join(root, result.wallpaper.id, 'media.png'))).toBe(true);
+    });
+
+    it('ignores folders that are not ours', async () => {
+      mkdirSync(join(root, 'not-one-of-ours'));
+      writeFileSync(join(root, 'not-one-of-ours', '.removed'), '');
+      await library.initialise();
+      expect(existsSync(join(root, 'not-one-of-ours'))).toBe(true);
+    });
   });
 });
 

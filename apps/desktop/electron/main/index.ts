@@ -16,18 +16,32 @@ const WINDOW_BACKGROUND = '#0a0b0e';
 const TITLE_BAR_HEIGHT = 40;
 const DEV_SERVER_URL = process.env['ELECTRON_RENDERER_URL'];
 const START_HIDDEN_ARG = '--start-hidden';
+const RENDERER_CRASH_WINDOW_MS = 60_000;
+const MAX_RENDERER_CRASHES = 3;
 
 // Only development and test builds may relocate user data. A packaged build ignores this,
 // so an environment variable cannot silently point the product at other data.
 const overrideUserData = process.env['ANIMATED_WALLS_USER_DATA'];
 if (overrideUserData && !app.isPackaged) app.setPath('userData', overrideUserData);
 app.setName('Animated Walls');
+// Must match appId in electron-builder.yml, or Windows groups the running app apart from its
+// pinned shortcut and attributes its tray icon and notifications to Electron.
+app.setAppUserModelId('app.animatedwalls.desktop');
 
 registerSchemes();
 
 let mainWindow: BrowserWindow | null = null;
 let tray: AppTray | null = null;
 let quitting = false;
+let appLogger: Logger | null = null;
+
+// Whatever escapes everything else should still leave a record. Without a listener these would
+// reach Electron's default handling, and a rejection would vanish without touching the log.
+process.on('uncaughtException', (error) => fatal(error));
+process.on('unhandledRejection', (reason) => {
+  console.error(reason);
+  appLogger?.error(LOG_SOURCE, 'app.unhandled-rejection', { error: reason });
+});
 
 function isTrustedUrl(url: string): boolean {
   try {
@@ -109,15 +123,34 @@ function createWindow(settings: AppSettings, logger: Logger): BrowserWindow {
       logger.warn(LOG_SOURCE, 'navigation.blocked', { url });
     }
   });
+
+  const load = (): void => {
+    window.loadURL(DEV_SERVER_URL && !app.isPackaged ? DEV_SERVER_URL : `${APP_ORIGIN}/index.html`).catch((error: unknown) => {
+      logger.error(LOG_SOURCE, 'window.load-failed', { error });
+    });
+  };
+
+  const crashes: number[] = [];
   window.webContents.on('render-process-gone', (_event, details) => {
     logger.error(LOG_SOURCE, 'renderer.gone', { reason: details.reason, exitCode: details.exitCode });
-  });
+    if (details.reason === 'clean-exit' || quitting || window.isDestroyed()) return;
 
-  if (DEV_SERVER_URL && !app.isPackaged) {
-    void window.loadURL(DEV_SERVER_URL);
-  } else {
-    void window.loadURL(`${APP_ORIGIN}/index.html`);
-  }
+    // Reload, unless it keeps crashing, which reloading would just turn into an endless loop.
+    const now = Date.now();
+    crashes.push(now);
+    while (crashes[0] !== undefined && now - crashes[0] > RENDERER_CRASH_WINDOW_MS) crashes.shift();
+    if (crashes.length >= MAX_RENDERER_CRASHES) {
+      logger.error(LOG_SOURCE, 'renderer.gave-up', { crashes: crashes.length });
+      dialog.showErrorBox('Animated Walls keeps crashing', `The window crashed ${crashes.length} times in a row, so it was not reloaded again. Restart the app, and if this continues, the details are in its logs folder.`);
+      return;
+    }
+    logger.info(LOG_SOURCE, 'renderer.reloading');
+    load();
+  });
+  window.on('unresponsive', () => logger.warn(LOG_SOURCE, 'renderer.unresponsive'));
+  window.on('responsive', () => logger.info(LOG_SOURCE, 'renderer.responsive'));
+
+  load();
   return window;
 }
 
@@ -151,6 +184,7 @@ async function bootstrap(): Promise<void> {
   const userData = app.getPath('userData');
   const logDirectory = join(userData, 'logs');
   const logger = new Logger({ directory: logDirectory, fileName: 'app.log' });
+  appLogger = logger;
   logger.info(LOG_SOURCE, 'app.start', {
     version: app.getVersion(),
     electron: process.versions.electron,
@@ -175,6 +209,8 @@ async function bootstrap(): Promise<void> {
     logger.warn(LOG_SOURCE, 'permission.denied', { permission });
     callback(false);
   });
+  // Without this, a page asking whether it has a permission is told yes by default.
+  session.defaultSession.setPermissionCheckHandler(() => false);
 
   let opened;
   try {
@@ -197,10 +233,6 @@ async function bootstrap(): Promise<void> {
     root: join(userData, 'wallpapers'),
     repository: wallpaperRepository,
     logger,
-    measureImage: (path) => {
-      const size = nativeImage.createFromPath(path).getSize();
-      return size.width > 0 ? size : null;
-    },
   });
   await library.initialise();
 
@@ -233,6 +265,7 @@ async function bootstrap(): Promise<void> {
     broadcast(IPC.engineStatusEvent, status);
   });
   engine.on('state', (state) => broadcast(IPC.engineStateEvent, state));
+  engine.on('gpu', (gpu) => broadcast(IPC.engineGpuEvent, gpu));
 
   services = {
     logger,
@@ -361,7 +394,7 @@ async function bootstrap(): Promise<void> {
 
 function fatal(error: unknown): void {
   console.error(error);
-  services?.logger.error(LOG_SOURCE, 'app.fatal', { error });
+  appLogger?.error(LOG_SOURCE, 'app.fatal', { error });
   dialog.showErrorBox('Animated Walls failed to start', error instanceof Error ? error.message : String(error));
   app.exit(1);
 }
@@ -395,7 +428,7 @@ if (!app.requestSingleInstanceLock()) {
     tray = null;
 
     engine
-      .stop()
+      .shutdown()
       .catch((error: unknown) => logger.error(LOG_SOURCE, 'engine.stop-failed', { error }))
       .finally(() => {
         closeDatabase();

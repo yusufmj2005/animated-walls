@@ -21,7 +21,9 @@ public sealed class PlaybackCoordinator(StructuredLogger logger, EngineCounters 
     private SessionState _session = new(false, DisplayPowerStates.Unknown, false, false, false);
     private PlaybackConfig _config = PlaybackConfig.Default;
     private bool _paused;
+    private GpuCapabilities _gpu = gpu;
     private EngineState? _current;
+    private EngineState? _lastPublished;
 
     public event Action<EngineState>? StateChanged;
 
@@ -92,6 +94,16 @@ public sealed class PlaybackCoordinator(StructuredLogger logger, EngineCounters 
         }
     }
 
+    /// <summary>The graphics hardware changed, such as after a driver update.</summary>
+    public void UpdateGpu(GpuCapabilities gpu)
+    {
+        lock (_gate)
+        {
+            _gpu = gpu;
+            Recompute(force: true);
+        }
+    }
+
     public EngineState SetAssignments(IEnumerable<DisplayAssignment> assignments)
     {
         lock (_gate)
@@ -131,11 +143,16 @@ public sealed class PlaybackCoordinator(StructuredLogger logger, EngineCounters 
 
     private void Recompute(bool force)
     {
-        var previous = _current;
         var next = Compose();
-        var changed = force || previous is null || HasSignificantChange(previous, next);
         _current = next;
-        if (changed) StateChanged?.Invoke(next);
+
+        // Compared with what was last sent, not with the last evaluation. Otherwise a slow drag
+        // that changes visibility by 1% each step never counts as a change, however far it goes.
+        if (force || _lastPublished is null || HasSignificantChange(_lastPublished, next))
+        {
+            _lastPublished = next;
+            StateChanged?.Invoke(next);
+        }
     }
 
     private static bool HasSignificantChange(EngineState previous, EngineState next)
@@ -165,7 +182,7 @@ public sealed class PlaybackCoordinator(StructuredLogger logger, EngineCounters 
                 visibility,
                 _session,
                 _session.ExclusiveFullscreen && string.Equals(_session.ExclusiveDeviceName, display.DeviceName, StringComparison.OrdinalIgnoreCase),
-                gpu.IsSupported,
+                _gpu.IsSupported,
                 _paused,
                 _config.PauseOnBattery));
 

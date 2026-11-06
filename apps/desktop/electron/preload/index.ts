@@ -13,6 +13,7 @@ const api: AnimatedWallsApi = {
   app: {
     getInfo: () => ipcRenderer.invoke(IPC.appGetInfo),
     openLogsFolder: () => ipcRenderer.invoke(IPC.appOpenLogs),
+    reportError: (message, stack) => ipcRenderer.invoke(IPC.appReportError, message, stack),
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC.settingsGet),
@@ -47,6 +48,7 @@ const api: AnimatedWallsApi = {
     restart: () => ipcRenderer.invoke(IPC.engineRestart),
     onStatus: (listener) => subscribe(IPC.engineStatusEvent, listener),
     onState: (listener) => subscribe(IPC.engineStateEvent, listener),
+    onGpu: (listener) => subscribe(IPC.engineGpuEvent, listener),
   },
 };
 

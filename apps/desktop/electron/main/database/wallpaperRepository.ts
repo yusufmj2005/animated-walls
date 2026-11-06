@@ -87,7 +87,7 @@ export class WallpaperRepository {
   }
 
   listAssignments(): DisplayAssignmentRecord[] {
-    const rows = this.db.prepare('SELECT display_id, wallpaper_id, updated_at FROM display_assignments').all() as unknown as {
+    const rows = this.db.prepare('SELECT display_id, wallpaper_id, updated_at FROM display_assignments ORDER BY updated_at DESC').all() as unknown as {
       display_id: string;
       wallpaper_id: string;
       updated_at: string;

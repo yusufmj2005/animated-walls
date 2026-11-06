@@ -30,6 +30,8 @@ export const REASON_LABELS: Record<RenderReason, string> = {
   'desktop-covered': 'Covered by other windows',
   'exclusive-fullscreen': 'Fullscreen app running',
   'session-locked': 'Screen locked',
+  'session-disconnected': 'Nobody connected',
+  'screen-saver': 'Screen saver running',
   'display-off': 'Display off',
   'system-suspended': 'System asleep',
   'on-battery': 'On battery',

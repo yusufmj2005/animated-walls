@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 import yauzl from 'yauzl';
-import { MAX_MANIFEST_BYTES, MANIFEST_FILE_NAME, type PackageEntry } from '@animated-walls/wallpaper-format';
+import { DEFAULT_PACKAGE_LIMITS, MAX_MANIFEST_BYTES, MANIFEST_FILE_NAME, type PackageEntry } from '@animated-walls/wallpaper-format';
 
 const S_IFMT = 0o170000;
 const S_IFLNK = 0o120000;
@@ -40,6 +40,11 @@ export class PackageReader {
     });
 
     try {
+      // Checked before reading the file list, which is what could exhaust memory. A crafted
+      // archive of a few hundred megabytes can declare millions of entries.
+      if (zip.entryCount > DEFAULT_PACKAGE_LIMITS.maxEntries) {
+        throw new PackageReadError(`A package may contain at most ${DEFAULT_PACKAGE_LIMITS.maxEntries} files.`);
+      }
       return new PackageReader(zip, await readAllEntries(zip));
     } catch (error) {
       zip.close();
@@ -62,13 +67,18 @@ export class PackageReader {
     const stream = await this.openStream(entry.zipEntry);
     const chunks: Buffer[] = [];
     let total = 0;
-    for await (const chunk of stream as AsyncIterable<Buffer>) {
-      total += chunk.length;
-      if (total > MAX_MANIFEST_BYTES) {
-        stream.destroy();
-        throw new PackageReadError(`${MANIFEST_FILE_NAME} is larger than ${MAX_MANIFEST_BYTES} bytes.`);
+    try {
+      for await (const chunk of stream as AsyncIterable<Buffer>) {
+        total += chunk.length;
+        if (total > MAX_MANIFEST_BYTES) {
+          stream.destroy();
+          throw new PackageReadError(`${MANIFEST_FILE_NAME} is larger than ${MAX_MANIFEST_BYTES} bytes.`);
+        }
+        chunks.push(chunk);
       }
-      chunks.push(chunk);
+    } catch (error) {
+      if (error instanceof PackageReadError) throw error;
+      throw damaged(MANIFEST_FILE_NAME);
     }
     return Buffer.concat(chunks).toString('utf8');
   }
@@ -92,7 +102,14 @@ export class PackageReader {
       }
       await mkdir(dirname(target), { recursive: true });
       const stream = await this.openStream(zipEntry);
-      await pipeline(stream, createWriteStream(target, { flags: 'wx' }));
+      try {
+        await pipeline(stream, createWriteStream(target, { flags: 'wx' }));
+      } catch (error) {
+        // A full disk or a permissions problem says nothing about the package, and the user
+        // needs to see those as they are. Anything else came from reading the archive.
+        if (error instanceof Error && 'syscall' in error) throw error;
+        throw damaged(listing.path);
+      }
     }
   }
 
@@ -108,6 +125,10 @@ export class PackageReader {
       });
     });
   }
+}
+
+function damaged(path: string): PackageReadError {
+  return new PackageReadError(`The package is damaged: "${path}" could not be read. Try downloading it again.`);
 }
 
 function readAllEntries(zip: yauzl.ZipFile): Promise<RawEntry[]> {

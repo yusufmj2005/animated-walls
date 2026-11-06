@@ -26,7 +26,9 @@ export function HomePage({ onNavigate }: { onNavigate: (page: PageId) => void })
   const primary = state?.displays.find((display) => display.isPrimary) ?? state?.displays[0] ?? null;
   const primaryVisibility = state?.visibility.find((item) => item.displayId === primary?.id);
   const primaryRender = state?.render.find((item) => item.displayId === primary?.id);
-  const assignedId = assignments.find((item) => item.displayId === primary?.id)?.wallpaperId;
+  // The database knows the assignment even when the engine, which knows the displays, is down.
+  // That must not read as if nothing were assigned.
+  const assignedId = primary ? assignments.find((item) => item.displayId === primary.id)?.wallpaperId : assignments[0]?.wallpaperId;
   const current = wallpapers.find((item) => item.id === assignedId) ?? null;
   const assignedIds = new Set(assignments.map((item) => item.wallpaperId));
 
@@ -56,7 +58,8 @@ export function HomePage({ onNavigate }: { onNavigate: (page: PageId) => void })
         <section aria-label="Current wallpaper" className="relative overflow-hidden rounded-hero border border-line bg-surface">
           {current ? (
             <>
-              <WallpaperArt wallpaper={current} className="preview-frame w-full" />
+              {/* Keyed, so a preview that failed to load does not stay failed for the next one. */}
+              <WallpaperArt key={current.id} wallpaper={current} className="preview-frame w-full" />
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-5 pt-16 pb-4">
                 <div className="text-xs font-medium tracking-wide text-white/70">Current wallpaper</div>
                 <div className="mt-0.5 font-display text-2xl font-semibold text-white">{current.name}</div>

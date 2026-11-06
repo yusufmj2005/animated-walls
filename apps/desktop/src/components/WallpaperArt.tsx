@@ -6,9 +6,8 @@ import { usePageVisible } from '../hooks/usePageVisible';
 const KIND_ICON = { video: VideoIcon, image: ImageIcon, web: CodeIcon };
 
 /**
- * A wallpaper's still preview, playing video only while `playing` is set. Video decoding
- * here is the app's own UI cost, so a <video> is mounted only on demand and fully
- * unloaded afterwards.
+ * A wallpaper's still preview, playing video only while `playing` is set and the window can be
+ * seen. Video decoding here is the app's own UI cost, so a <video> is mounted only on demand.
  */
 export function WallpaperArt({ wallpaper, playing = false, className }: { wallpaper: WallpaperRecord; playing?: boolean; className?: string }) {
   // Tracked apart: a video the PC cannot decode must not take its still image down with it.

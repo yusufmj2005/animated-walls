@@ -72,6 +72,8 @@ export interface AnimatedWallsApi {
   app: {
     getInfo(): Promise<AppInfo>;
     openLogsFolder(): Promise<void>;
+    /** Records an error from the UI in the app log. */
+    reportError(message: string, stack?: string): Promise<void>;
   };
   settings: {
     get(): Promise<AppSettings>;
@@ -95,6 +97,7 @@ export interface AnimatedWallsApi {
     restart(): Promise<void>;
     onStatus(listener: (status: EngineStatus) => void): () => void;
     onState(listener: (state: EngineState) => void): () => void;
+    onGpu(listener: (gpu: GpuCapabilities) => void): () => void;
   };
 }
 
@@ -102,6 +105,7 @@ export interface AnimatedWallsApi {
 export const IPC = {
   appGetInfo: 'app:get-info',
   appOpenLogs: 'app:open-logs',
+  appReportError: 'app:report-error',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   settingsChangedEvent: 'settings:changed',
@@ -119,4 +123,5 @@ export const IPC = {
   engineRestart: 'engine:restart',
   engineStatusEvent: 'engine:status',
   engineStateEvent: 'engine:state',
+  engineGpuEvent: 'engine:gpu',
 } as const;

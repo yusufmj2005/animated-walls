@@ -103,13 +103,31 @@ export interface SegmentOption<T extends string | number> {
 
 export function Segmented<T extends string | number>({ value, options, onChange, label }: { value: T; options: readonly SegmentOption<T>[]; onChange: (next: T) => void; label: string }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex h-9 items-center gap-0.5 rounded-control bg-surface p-0.75 ring-1 ring-line">
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className="inline-flex h-9 items-center gap-0.5 rounded-control bg-surface p-0.75 ring-1 ring-line"
+      onKeyDown={(event) => {
+        const current = options.findIndex((option) => option.value === value);
+        const last = options.length - 1;
+        const next = { ArrowRight: current + 1, ArrowDown: current + 1, ArrowLeft: current - 1, ArrowUp: current - 1, Home: 0, End: last }[event.key];
+        if (next === undefined) return;
+        event.preventDefault();
+        const wrapped = next > last ? 0 : next < 0 ? last : next;
+        const target = options[wrapped];
+        if (!target) return;
+        onChange(target.value);
+        event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]')[wrapped]?.focus();
+      }}
+    >
       {options.map((option) => (
         <button
           key={String(option.value)}
           type="button"
           role="radio"
           aria-checked={option.value === value}
+          // One tab stop for the group. Arrow keys move within it, as a radio group should.
+          tabIndex={option.value === value ? 0 : -1}
           onClick={() => onChange(option.value)}
           className={cx(
             'h-full cursor-pointer rounded-[6px] px-3 text-[13px] transition-colors duration-150',

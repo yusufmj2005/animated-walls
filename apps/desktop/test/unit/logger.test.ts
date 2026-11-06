@@ -63,6 +63,14 @@ describe('Logger', () => {
     expect(lines().at(-1)).toContain('after');
   });
 
+  it('stays closed once closed', () => {
+    const logger = new Logger({ directory: directory.path });
+    logger.info('s', 'before');
+    logger.close();
+    logger.info('s', 'after');
+    expect(lines()).toHaveLength(1);
+  });
+
   it('continues an existing file after a restart', () => {
     const first = new Logger({ directory: directory.path });
     first.info('s', 'one');

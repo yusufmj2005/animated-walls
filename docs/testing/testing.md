@@ -51,9 +51,9 @@ These need a person, or hardware that was not available during Sprint 01:
 
 | Check | How | Why it is manual |
 |---|---|---|
-| Visible to covered to visible on a real desktop | Minimise everything, open the Displays page, and move a window across and off the screen. The badge should go Visible, Partly visible, Covered, and back | The development desktop was always covered by maximised windows, so automated runs only saw covered to covered |
+| Fully visible on a real desktop | Minimise everything, open the Displays page, and move a window across and off the screen. The badge should go Visible, Partly visible, Covered, and back | Partly visible to covered and back was seen on the real desktop, with suspend reaching the UI in 85 ms and resume in 92 ms. Fully visible was not, since other windows were always open |
 | Icons draw above the hosted window | Minimise everything and run `--hosting-poc --seconds 10`. Solid colours should appear with icons on top | The automated check samples an empty point |
-| Lock, display off, sleep | Lock the PC, let the display sleep, and check `session.changed` and `render.transition` in `engine.log` | Doing this in a test would interrupt the user |
+| Lock, display off, sleep, screen saver, Remote Desktop disconnect | Do each one, then check `session.changed` and `render.transition` in `engine.log` | Doing this in a test would interrupt the user |
 | Exclusive fullscreen game | Run one and check the reason is `exclusive-fullscreen` | Requires a game |
 | Multiple monitors, hotplug, mixed DPI | Connect a second display | Only one active display was available |
 | Windows 10 and pre-24H2 layouts | Run `--diagnose` and `--hosting-poc` | Not available |

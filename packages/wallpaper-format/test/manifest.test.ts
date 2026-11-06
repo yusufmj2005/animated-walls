@@ -3,6 +3,8 @@ import {
   CURRENT_FORMAT_VERSION,
   DEFAULT_PACKAGE_LIMITS,
   parseManifest,
+  readImageSize,
+  stripUnsafeText,
   sniffMediaKind,
   validatePackageListing,
   validatePackagePath,
@@ -108,6 +110,15 @@ describe('parseManifest', () => {
     expect(parse({ description: 'bell\u0007' }).ok).toBe(false);
   });
 
+  it.each(['Official\u202Eevil', 'Name\u200B', '\u2066Name', 'Na\uFEFFme', 'Line\u2028Break'])('rejects invisible characters in %j', (name) => {
+    expect(parse({ name }).ok).toBe(false);
+  });
+
+  it('keeps the joiners that emoji and some languages need', () => {
+    expect(parse({ name: 'Family \u{1F468}\u200D\u{1F469}' }).ok).toBe(true);
+    expect(parse({ name: '\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645' }).ok).toBe(true);
+  });
+
   it('warns but accepts unknown capabilities and fields', () => {
     const result = parse({ requiredCapabilities: ['future.thing'], extra: true });
     expect(result.ok).toBe(true);
@@ -162,6 +173,55 @@ describe('sniffMediaKind', () => {
 
   it('does not recognise an executable', () => {
     expect(sniffMediaKind(bytes(0x4d, 0x5a, 0x90, 0x00))).toBeNull();
+  });
+});
+
+describe('stripUnsafeText', () => {
+  it('removes what a manifest would reject', () => {
+    expect(stripUnsafeText('pho\u202Eto\u200B\u0007.png')).toBe('photo.png');
+  });
+});
+
+describe('readImageSize', () => {
+  const ascii = (text: string) => Array.from(text, (c) => c.charCodeAt(0));
+  const bytes = (...values: number[]) => new Uint8Array(values);
+  const pad = (values: number[], length: number) => [...values, ...new Array(Math.max(length - values.length, 0)).fill(0)];
+
+  it('reads PNG', () => {
+    const png = bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, ...ascii('IHDR'), 0, 0, 0x0f, 0, 0, 0, 0x08, 0x70);
+    expect(readImageSize(png)).toEqual({ width: 3840, height: 2160 });
+  });
+
+  it('reads JPEG, skipping metadata segments and fill bytes', () => {
+    const jpeg = bytes(0xff, 0xd8, 0xff, 0xe1, 0, 4, 1, 2, 0xff, 0xff, 0xc0, 0, 11, 8, 0x04, 0x38, 0x07, 0x80, 3, 0, 0);
+    expect(readImageSize(jpeg)).toEqual({ width: 1920, height: 1080 });
+  });
+
+  it('reads each WebP layout', () => {
+    const header = (chunk: string) => [...ascii('RIFF'), 0, 0, 0, 0, ...ascii('WEBP'), ...ascii(chunk)];
+    const vp8x = pad([...header('VP8X'), 0, 0, 0, 0, 0, 0, 0, 0, 0x7f, 0x07, 0, 0x37, 0x04, 0], 32);
+    expect(readImageSize(new Uint8Array(vp8x))).toEqual({ width: 1920, height: 1080 });
+
+    const vp8 = pad([...header('VP8 '), 0, 0, 0, 0, 0, 0, 0, 0x9d, 0x01, 0x2a, 0x80, 0x07, 0x38, 0x04], 32);
+    expect(readImageSize(new Uint8Array(vp8))).toEqual({ width: 1920, height: 1080 });
+
+    const width = 1919;
+    const height = 1079;
+    const bits = (width | (height << 14)) >>> 0;
+    const vp8l = pad([...header('VP8L'), 0, 0, 0, 0, 0x2f, bits & 255, (bits >>> 8) & 255, (bits >>> 16) & 255, (bits >>> 24) & 255], 32);
+    expect(readImageSize(new Uint8Array(vp8l))).toEqual({ width: 1920, height: 1080 });
+  });
+
+  it.each([
+    ['truncated PNG', bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)],
+    ['truncated JPEG', bytes(0xff, 0xd8, 0xff, 0xe0, 0)],
+    ['JPEG with a bad segment length', bytes(0xff, 0xd8, 0xff, 0xe1, 0, 0, 0, 0, 0, 0, 0, 0)],
+    ['JPEG with no size marker', bytes(0xff, 0xd8, 0, 0, 0, 0, 0, 0, 0, 0, 0)],
+    ['zero-sized PNG', bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, ...ascii('IHDR'), 0, 0, 0, 0, 0, 0, 0, 0)],
+    ['not an image', bytes(0x4d, 0x5a, 0x90)],
+    ['video', bytes(0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0)],
+  ])('returns null for %s rather than throwing', (_name, input) => {
+    expect(readImageSize(input)).toBeNull();
   });
 });
 

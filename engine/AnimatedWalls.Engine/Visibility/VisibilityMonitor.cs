@@ -19,6 +19,7 @@ public sealed class VisibilityMonitor(
     private readonly object _gate = new();
     private IReadOnlyList<DisplayInfo> _displays = [];
     private bool _locked;
+    private bool _disconnected;
     private string _displayPower = DisplayPowerStates.Unknown;
     private bool _systemSuspended;
     private bool _onBattery;
@@ -33,6 +34,9 @@ public sealed class VisibilityMonitor(
         pump.VisibilityDirty += Evaluate;
         pump.DisplaysDirty += RefreshDisplays;
         pump.SessionLockChanged += locked => UpdateSession(() => _locked = locked);
+        // The event says what happened to a connection, not whether anyone is left, because
+        // moving from console to Remote Desktop sends a disconnect and then a connect.
+        pump.SessionConnectionChanged += () => UpdateSession(() => _disconnected = SessionInfo.Read(logger).Disconnected);
         pump.DisplayPowerChanged += power => UpdateSession(() => _displayPower = power);
         pump.SystemSuspendChanged += suspended => UpdateSession(() => _systemSuspended = suspended);
         pump.BatteryChanged += onBattery => UpdateSession(() => _onBattery = onBattery);
@@ -49,7 +53,7 @@ public sealed class VisibilityMonitor(
             }
 
             // The engine can start on a locked screen, such as a restart after a crash.
-            _locked = SessionLock.Read(logger);
+            (_locked, _disconnected) = SessionInfo.Read(logger);
 
             RefreshDisplays();
             PublishSession();
@@ -103,9 +107,16 @@ public sealed class VisibilityMonitor(
 
     private void PublishSession()
     {
-        coordinator.UpdateSession(new SessionState(_locked, _displayPower, _systemSuspended, _onBattery, false)
-            .WithExclusive(ReadExclusiveDevice()));
+        var session = new SessionState(_locked, _displayPower, _systemSuspended, _onBattery, false).WithExclusive(ReadExclusiveDevice());
+        coordinator.UpdateSession(session with { SessionDisconnected = _disconnected, ScreenSaverRunning = ReadScreenSaverRunning() });
     }
+
+    /// <summary>
+    /// Windows has no event for this, but a screen saver runs on its own desktop, so starting
+    /// and stopping raise the desktop-switch event that leads here.
+    /// </summary>
+    private static bool ReadScreenSaverRunning() =>
+        User32.SystemParametersInfo(User32.SPI_GETSCREENSAVERRUNNING, 0, out var running, 0) && running != 0;
 
     /// <summary>
     /// Device name of the monitor owned by an exclusive-fullscreen D3D app, if any.
@@ -124,26 +135,29 @@ public sealed class VisibilityMonitor(
     }
 }
 
-internal static unsafe class SessionLock
+internal static unsafe class SessionInfo
 {
-    // In WTSINFOEXW the union holds a LARGE_INTEGER, so it starts at offset 8, and
-    // SessionFlags is the third 32-bit field inside it.
+    // In WTSINFOEXW the union holds a LARGE_INTEGER, so it starts at offset 8. SessionState and
+    // SessionFlags are the second and third 32-bit fields inside it.
+    private const int SessionStateOffset = 12;
     private const int SessionFlagsOffset = 16;
 
-    /// <summary>Whether this session is locked now. Unknown is reported as not locked and logged.</summary>
-    public static bool Read(StructuredLogger logger)
+    /// <summary>The state of this session now. Unknown is reported as active and logged.</summary>
+    public static (bool Locked, bool Disconnected) Read(StructuredLogger logger)
     {
         if (!Wtsapi32.WTSQuerySessionInformation(0, Wtsapi32.WTS_CURRENT_SESSION, Wtsapi32.WTSSessionInfoEx, out var buffer, out _))
         {
-            logger.Warn("engine.session", "session.lock-state-unavailable", new Dictionary<string, object?>
+            logger.Warn("engine.session", "session.state-unavailable", new Dictionary<string, object?>
             {
                 ["error"] = System.Runtime.InteropServices.Marshal.GetLastPInvokeError(),
             });
-            return false;
+            return (false, false);
         }
         try
         {
-            return *(int*)(buffer + SessionFlagsOffset) == Wtsapi32.WTS_SESSIONSTATE_LOCK;
+            return (
+                *(int*)(buffer + SessionFlagsOffset) == Wtsapi32.WTS_SESSIONSTATE_LOCK,
+                *(int*)(buffer + SessionStateOffset) == Wtsapi32.WTSDisconnected);
         }
         finally
         {

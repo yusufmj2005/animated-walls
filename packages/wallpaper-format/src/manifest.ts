@@ -57,8 +57,19 @@ const ENTRY_EXTENSIONS: Record<WallpaperType, readonly string[]> = {
 const PREVIEW_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
 
 const ID_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
-const CONTROL_CHARS_EXCEPT_LINE_BREAKS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
+// Besides control characters, this covers invisible ones that can disguise text: bidirectional
+// overrides and isolates, which reorder what is displayed, and zero-width characters. Joiners
+// (U+200C, U+200D) and direction marks (U+200E, U+200F) stay allowed, because emoji and several
+// real languages need them.
+const INVISIBLE = '\\u200b\\u2028\\u2029\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff';
+const CONTROL_CHARS = new RegExp(`[\\u0000-\\u001f\\u007f-\\u009f${INVISIBLE}]`);
+const CONTROL_CHARS_EXCEPT_LINE_BREAKS = new RegExp(`[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f${INVISIBLE}]`);
+const UNSAFE_TEXT_GLOBAL = new RegExp(CONTROL_CHARS.source, 'g');
+
+/** Removes what `parseManifest` would reject, for text with no manifest, such as file names. */
+export function stripUnsafeText(text: string): string {
+  return text.replace(UNSAFE_TEXT_GLOBAL, '');
+}
 const KNOWN_TOP_LEVEL_KEYS = new Set([
   'formatVersion',
   'id',
@@ -119,7 +130,7 @@ function readText(
     return undefined;
   }
   if ((allowLineBreaks ? CONTROL_CHARS_EXCEPT_LINE_BREAKS : CONTROL_CHARS).test(trimmed)) {
-    issues.error(path, 'control-characters', `"${path}" must not contain control characters.`);
+    issues.error(path, 'control-characters', `"${path}" must not contain control or invisible characters.`);
     return undefined;
   }
   return trimmed;

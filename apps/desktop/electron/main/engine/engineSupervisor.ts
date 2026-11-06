@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import type { EngineEvents, EngineHealth, EngineMethods, EngineState, EngineStatus, LogLevel } from '@animated-walls/shared-types';
+import type { EngineEvents, EngineHealth, EngineMethods, EngineState, EngineStatus, GpuCapabilities, LogLevel } from '@animated-walls/shared-types';
 import type { Logger } from '../logging/logger';
 import { EnginePipeClient } from './enginePipeClient';
 import { RestartBackoff } from './restartBackoff';
@@ -31,6 +31,7 @@ export interface SupervisorOptions {
 export interface SupervisorEvents {
   status: [status: EngineStatus];
   state: [state: EngineState];
+  gpu: [gpu: GpuCapabilities];
 }
 
 type Params<M extends keyof EngineMethods> = EngineMethods[M]['params'];
@@ -50,6 +51,7 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
   private readonly backoff = new RestartBackoff(RESTART_BACKOFF_MS, STABLE_AFTER_MS);
   private restartInFlight: Promise<void> | null = null;
   private stopping = false;
+  private closed = false;
   private lastState: EngineState | null = null;
   private currentStatus: EngineStatus = { connection: 'stopped', health: null, lastError: null, restarts: 0 };
 
@@ -66,6 +68,7 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
   }
 
   async start(): Promise<void> {
+    if (this.closed) return;
     this.stopping = false;
     this.clearRestartTimer();
     this.backoff.reset();
@@ -88,6 +91,19 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
       this.restartInFlight = null;
     });
     return this.restartInFlight;
+  }
+
+  /**
+   * Stops for good, for when the app is quitting. Unlike stop, it also holds off a restart
+   * already under way, which would otherwise start an engine after the app's data has closed.
+   */
+  async shutdown(): Promise<void> {
+    this.closed = true;
+    await this.stop();
+    await this.restartInFlight?.catch((error: unknown) => {
+      this.options.logger.warn(LOG_SOURCE, 'engine.restart-during-shutdown-failed', { error });
+    });
+    await this.stop();
   }
 
   async stop(): Promise<void> {
@@ -123,7 +139,7 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
     this.setStatus({ connection: this.backoff.attemptCount > 0 ? 'restarting' : 'starting', health: null });
 
     if (!existsSync(enginePath)) {
-      this.fail(`The engine executable was not found at ${enginePath}. Run "npm run build:engine".`);
+      this.fail(`The engine is missing from ${enginePath}. Reinstall Animated Walls. In a development checkout, run "npm run build:engine".`);
       return;
     }
 
@@ -192,6 +208,8 @@ export class EngineSupervisor extends EventEmitter<SupervisorEvents> {
       if (name === 'state.changed') {
         this.lastState = data as EngineEvents['state.changed'];
         this.emit('state', this.lastState);
+      } else if (name === 'gpu.changed') {
+        this.emit('gpu', data as EngineEvents['gpu.changed']);
       } else {
         this.options.logger.warn(LOG_SOURCE, 'engine.unknown-event', { name });
       }

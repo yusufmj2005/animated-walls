@@ -55,6 +55,11 @@ export function reportFailure(title: string, error: unknown): void {
   notify({ tone: 'bad', title, detail: errorMessage(error) });
 }
 
+/** Sends a UI error to the app log. Failing to report one must not become another error. */
+export function reportRendererError(message: string, stack?: string): void {
+  api.app.reportError(message, stack).catch((error: unknown) => console.error('Could not report an error:', error));
+}
+
 let started = false;
 
 /** Loads initial data and subscribes to live engine updates, once. */
@@ -72,7 +77,14 @@ export function startStores(): void {
     }
   });
   api.engine.onState((state) => engineStateStore.set(state));
+  api.engine.onGpu((gpu) => gpuStore.set(gpu));
   api.settings.onChanged((settings) => settingsStore.set(settings));
+
+  window.addEventListener('error', (event) => reportRendererError(event.message, event.error instanceof Error ? event.error.stack : undefined));
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason: unknown = event.reason;
+    reportRendererError(reason instanceof Error ? reason.message : String(reason), reason instanceof Error ? reason.stack : undefined);
+  });
 
   // Updates pause while the window is hidden, so catch up when it returns.
   document.addEventListener('visibilitychange', () => {

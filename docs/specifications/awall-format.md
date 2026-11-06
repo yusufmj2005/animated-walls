@@ -25,7 +25,7 @@ An `.awall` file is a ZIP archive with `manifest.json` at its root. Validation l
 |---|---|---|
 | `formatVersion` | Yes | Positive integer, at most the app's supported version |
 | `id` | Yes | Lowercase letters and digits, separated by single `.`, `_` or `-`. At most 128 characters. Globally unique; reverse-domain style is recommended |
-| `name` | Yes | At most 120 characters, no control characters |
+| `name` | Yes | At most 120 characters, with no control characters, bidirectional overrides or zero-width spaces |
 | `description` | No | At most 2000 characters. Line breaks are allowed |
 | `creator.name` | Yes | At most 120 characters |
 | `creator.url` | No | Must be `https://` |

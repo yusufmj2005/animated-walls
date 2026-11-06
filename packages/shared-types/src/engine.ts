@@ -97,6 +97,8 @@ export interface SessionState {
   systemSuspended: boolean;
   onBattery: boolean;
   exclusiveFullscreen: boolean;
+  sessionDisconnected: boolean;
+  screenSaverRunning: boolean;
 }
 
 export type RenderDecision = 'render' | 'suspended' | 'blocked' | 'idle';
@@ -109,6 +111,8 @@ export type RenderReason =
   | 'desktop-covered'
   | 'exclusive-fullscreen'
   | 'session-locked'
+  | 'session-disconnected'
+  | 'screen-saver'
   | 'display-off'
   | 'system-suspended'
   | 'on-battery'
@@ -183,6 +187,7 @@ export interface EngineMethods {
 
 export interface EngineEvents {
   'state.changed': EngineState;
+  'gpu.changed': GpuCapabilities;
 }
 
 /** Live status the supervisor reports for the engine process. */

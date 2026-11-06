@@ -77,6 +77,16 @@ public static class Program
 
         using var logger = new StructuredLogger(logDirectory, level: logLevel);
 
+        // Last-chance records. The process still ends after an unhandled exception, but the
+        // log says why instead of leaving only an exit code.
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            logger.Error("engine.host", "engine.unhandled-exception", new Dictionary<string, object?> { ["exception"] = args.ExceptionObject.ToString() });
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            logger.Error("engine.host", "engine.unobserved-task-exception", args.Exception);
+            args.SetObserved();
+        };
+
         var stdin = Console.OpenStandardInput();
         var token = await ReadTokenAsync(stdin).ConfigureAwait(false);
         if (token is null)

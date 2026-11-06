@@ -237,6 +237,11 @@ internal static unsafe partial class User32
     [LibraryImport(Dll)] public static partial int QueryDisplayConfig(uint flags, ref uint pathCount, DisplayConfigPathInfo* paths, ref uint modeCount, DisplayConfigModeInfo* modes, nint topology);
     [LibraryImport(Dll)] public static partial int DisplayConfigGetDeviceInfo(void* packet);
 
+    public const uint SPI_GETSCREENSAVERRUNNING = 0x0072;
+
+    [LibraryImport(Dll, EntryPoint = "SystemParametersInfoW")] [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SystemParametersInfo(uint action, uint param, out int value, uint flags);
+
     [LibraryImport(Dll)] public static partial nint GetDC(nint hwnd);
     [LibraryImport(Dll)] public static partial int ReleaseDC(nint hwnd, nint hdc);
 
@@ -304,6 +309,7 @@ internal static partial class Wtsapi32
     public const uint WTS_CURRENT_SESSION = 0xFFFFFFFF;
     public const int WTSSessionInfoEx = 25;
     public const int WTS_SESSIONSTATE_LOCK = 0;
+    public const int WTSDisconnected = 4;
 
     [LibraryImport("wtsapi32.dll", EntryPoint = "WTSQuerySessionInformationW")] [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool WTSQuerySessionInformation(nint server, uint sessionId, int infoClass, out nint buffer, out uint bytes);

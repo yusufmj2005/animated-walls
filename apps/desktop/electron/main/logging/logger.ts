@@ -27,6 +27,7 @@ export class Logger {
   private fd: number | null = null;
   private size = 0;
   private reportedFailure = false;
+  private closed = false;
 
   constructor(options: LoggerOptions) {
     this.path = join(options.directory, options.fileName ?? 'app.log');
@@ -63,6 +64,7 @@ export class Logger {
   }
 
   close(): void {
+    this.closed = true;
     if (this.fd === null) return;
     try {
       closeSync(this.fd);
@@ -78,7 +80,7 @@ export class Logger {
   }
 
   private write(level: LogLevel, source: string, event: string, data?: LogData): void {
-    if (LEVEL_ORDER[level] < LEVEL_ORDER[this.level]) return;
+    if (this.closed || LEVEL_ORDER[level] < LEVEL_ORDER[this.level]) return;
     try {
       // Reopens after an earlier failure, so one bad moment does not end logging.
       if (this.fd === null) this.open();

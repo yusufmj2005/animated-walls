@@ -77,6 +77,12 @@ export function registerIpcHandlers(services: IpcServices): void {
 
   handle(IPC.appGetInfo, () => services.getInfo());
   handle(IPC.appOpenLogs, () => services.openLogsFolder());
+  handle(IPC.appReportError, (message: unknown, stack: unknown) => {
+    logger.error('app.renderer', 'renderer.error', {
+      message: String(message).slice(0, 2000),
+      stack: typeof stack === 'string' ? stack.slice(0, 8000) : undefined,
+    });
+  });
 
   handle(IPC.settingsGet, () => services.getSettings());
   handle(IPC.settingsSet, (key: unknown, value: unknown) => {

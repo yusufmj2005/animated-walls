@@ -182,6 +182,18 @@ public sealed class StructuredLoggerTests : IDisposable
     }
 
     [Fact]
+    public void Nothing_is_written_after_disposal()
+    {
+        var logger = new StructuredLogger(_directory);
+        logger.Info("s", "before");
+        logger.Dispose();
+        logger.Info("s", "after");
+        var text = File.ReadAllText(Path.Combine(_directory, "engine.log"));
+        Assert.Contains("before", text);
+        Assert.DoesNotContain("after", text);
+    }
+
+    [Fact]
     public void An_unwritable_directory_does_not_throw()
     {
         var blocked = Path.Combine(_directory, "file-not-dir");
@@ -211,6 +223,16 @@ public class ModelsTests
     {
         Assert.Equal(new Rect(5, 5, 5, 5), new Rect(0, 0, 10, 10).Intersect(new Rect(5, 5, 10, 10)));
         Assert.True(new Rect(0, 0, 10, 10).Intersect(new Rect(10, 0, 10, 10)).IsEmpty);
+    }
+
+    [Fact]
+    public void Empty_values_are_sent_as_null_as_the_contract_says()
+    {
+        var state = new DisplayRenderState("d", RenderDecisions.Idle, RenderReasons.NoWallpaperAssigned, null, "now");
+        var json = JsonSerializer.Serialize(new EngineState([], [], new SessionState(false, "on", false, false, false), [state], false), ProtocolJson.Default.EngineState);
+        Assert.Contains("\"wallpaperId\":null", json);
+        Assert.Contains("\"sessionDisconnected\":false", json);
+        Assert.Contains("\"screenSaverRunning\":false", json);
     }
 
     [Fact]

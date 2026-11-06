@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Notices } from './components/Notices';
 import { AppLayout, type PageId } from './layouts/AppLayout';
 import { DisplaysPage } from './pages/DisplaysPage';
@@ -28,11 +29,13 @@ export function App() {
       <AppLayout page={page} onNavigate={setPage}>
         {/* The key restarts the page transition on each navigation. */}
         <div key={page} className="h-full">
-          {page === 'home' && <HomePage onNavigate={setPage} />}
-          {page === 'library' && <LibraryPage />}
-          {page === 'marketplace' && <MarketplacePage />}
-          {page === 'displays' && <DisplaysPage />}
-          {page === 'settings' && <SettingsPage />}
+          <ErrorBoundary>
+            {page === 'home' && <HomePage onNavigate={setPage} />}
+            {page === 'library' && <LibraryPage />}
+            {page === 'marketplace' && <MarketplacePage />}
+            {page === 'displays' && <DisplaysPage />}
+            {page === 'settings' && <SettingsPage />}
+          </ErrorBoundary>
         </div>
       </AppLayout>
       <Notices />

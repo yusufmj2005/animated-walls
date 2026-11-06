@@ -27,6 +27,8 @@ public sealed unsafe class DesktopSignalPump : IDisposable
     private const uint WM_APP_STOP = 0x8001;
     private const uint WM_APP_REFRESH = 0x8002;
 
+    private const nint WTS_CONSOLE_CONNECT = 1;
+    private const nint WTS_REMOTE_DISCONNECT = 4;
     private const nint WTS_SESSION_LOCK = 7;
     private const nint WTS_SESSION_UNLOCK = 8;
     private const nint PBT_APMSUSPEND = 4;
@@ -78,6 +80,8 @@ public sealed unsafe class DesktopSignalPump : IDisposable
     /// <summary>The monitor layout may have changed. Debounced, on the pump thread.</summary>
     public event Action? DisplaysDirty;
     public event Action<bool>? SessionLockChanged;
+    /// <summary>Someone connected to or disconnected from this session, locally or remotely.</summary>
+    public event Action? SessionConnectionChanged;
     public event Action<string>? DisplayPowerChanged;
     public event Action<bool>? SystemSuspendChanged;
     public event Action<bool>? BatteryChanged;
@@ -330,6 +334,7 @@ public sealed unsafe class DesktopSignalPump : IDisposable
             case WM_WTSSESSION_CHANGE:
                 if (wParam == WTS_SESSION_LOCK) SessionLockChanged?.Invoke(true);
                 else if (wParam == WTS_SESSION_UNLOCK) SessionLockChanged?.Invoke(false);
+                else if (wParam >= WTS_CONSOLE_CONNECT && wParam <= WTS_REMOTE_DISCONNECT) SessionConnectionChanged?.Invoke();
                 return 0;
 
             case WM_POWERBROADCAST:

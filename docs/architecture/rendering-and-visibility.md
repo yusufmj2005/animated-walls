@@ -7,6 +7,7 @@ Wallpapers render on hardware or not at all. `GpuCapabilityDetector` enforces th
 - Each adapter is enumerated with DXGI. A device is created with `DriverType.Unknown` and an explicit adapter, which means that hardware or nothing. No code path requests `DriverType.Warp`.
 - Rejected: anything with `DXGI_ADAPTER_FLAG_SOFTWARE`, and all of vendor `0x1414` (Microsoft Basic Render, Basic Display and virtual GPUs). Also rejected is any adapter that cannot create a device at feature level 11_0 or above.
 - Selection prefers an adapter that drives a display, since presenting from it avoids a cross-adapter copy. After that, it prefers the most dedicated memory.
+- Detection repeats when displays change or a session reconnects, which is how driver updates, new GPUs and Remote Desktop show up. A change reaches the UI as a `gpu.changed` event.
 - With no usable adapter, the status is `unsupported`. Any display with a wallpaper assigned reports `blocked`, the UI shows why, and nothing falls back.
 
 Hardware decode support comes from `ID3D11VideoDevice::GetVideoDecoderProfile`, matched against the known H.264, HEVC, VP8, VP9 and AV1 profile GUIDs.
@@ -33,7 +34,8 @@ Windows events ──► DesktopSignalPump ──► VisibilityMonitor ──►
 | Source | Used for |
 |---|---|
 | `SetWinEventHook` (out of context): foreground, minimise, move/size end, show, hide, reorder, location change, cloak, desktop switch | Windows changing |
-| `WTSRegisterSessionNotification` | Lock and unlock |
+| `WTSRegisterSessionNotification` | Lock, unlock, and sessions connecting or disconnecting, read back with `WTSQuerySessionInformation` |
+| `SPI_GETSCREENSAVERRUNNING`, read when a desktop switch fires | Screen saver |
 | `RegisterPowerSettingNotification`: `GUID_SESSION_DISPLAY_STATUS`, `GUID_ACDC_POWER_SOURCE` | Display off or dimmed, battery |
 | `WM_POWERBROADCAST` | System sleep and resume |
 | `WM_DISPLAYCHANGE`, `WM_DPICHANGED`, `WM_SETTINGCHANGE` | Monitor layout |
@@ -80,13 +82,15 @@ Tested against a real session on Windows 11 build 26300:
 | 2 | No supported GPU | blocked | `gpu-unsupported` |
 | 3 | System asleep | suspended | `system-suspended` |
 | 4 | Session locked | suspended | `session-locked` |
-| 5 | Display off | suspended | `display-off` |
-| 6 | User paused | suspended | `user-paused` |
-| 7 | On battery, with the setting on | suspended | `on-battery` |
-| 8 | Exclusive fullscreen on this display | suspended | `exclusive-fullscreen` |
-| 9 | Covered | suspended | `desktop-covered` |
-| 10 | Partly visible | render | `partially-visible` |
-| 11 | Otherwise | render | `desktop-visible` |
+| 5 | Nobody connected to the session | suspended | `session-disconnected` |
+| 6 | Screen saver running | suspended | `screen-saver` |
+| 7 | Display off | suspended | `display-off` |
+| 8 | User paused | suspended | `user-paused` |
+| 9 | On battery, with the setting on | suspended | `on-battery` |
+| 10 | Exclusive fullscreen on this display | suspended | `exclusive-fullscreen` |
+| 11 | Covered | suspended | `desktop-covered` |
+| 12 | Partly visible | render | `partially-visible` |
+| 13 | Otherwise | render | `desktop-visible` |
 
 While `EngineInfo.RendererImplemented` is false, a `render` decision means only that frames would be drawn. The UI labels it "Would render".
 

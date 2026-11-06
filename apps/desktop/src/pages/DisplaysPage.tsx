@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Badge, Card, DisplayIcon, EmptyState, KeyValue, PageHeader, Select, cx } from '@animated-walls/design-system';
 import type { DisplayInfo, Rect } from '@animated-walls/shared-types';
 import { DecisionBadge, VisibilityBadge } from '../components/EngineSummary';
+import { WallpaperArt } from '../components/WallpaperArt';
 import { api } from '../services/api';
 import { REASON_LABELS } from '../services/format';
 import { assignmentsStore, engineStateStore, engineStatusStore, refreshWallpapers, reportFailure, wallpapersStore } from '../stores/appStores';
@@ -32,7 +33,7 @@ function DisplayMap({ displays, selectedId, onSelect }: { displays: readonly Dis
       <div className="relative" style={{ width: area.width * scale, height: area.height * scale }}>
         {displays.map((display, index) => {
           const wallpaperId = assignments.find((item) => item.displayId === display.id)?.wallpaperId;
-          const preview = wallpapers.find((item) => item.id === wallpaperId)?.previewUrl;
+          const wallpaper = wallpapers.find((item) => item.id === wallpaperId);
           const visibility = state?.visibility.find((item) => item.displayId === display.id);
           return (
             <button
@@ -51,7 +52,11 @@ function DisplayMap({ displays, selectedId, onSelect }: { displays: readonly Dis
                 display.id === selectedId ? 'border-accent' : 'border-line-strong hover:border-ink-3',
               )}
             >
-              {preview && <img src={preview} alt="" draggable={false} className={cx('absolute inset-0 size-full object-cover', visibility?.state === 'covered' && 'opacity-50')} />}
+              {wallpaper && (
+                <div className={cx('absolute inset-0', visibility?.state === 'covered' && 'opacity-50')}>
+                  <WallpaperArt key={wallpaper.id} wallpaper={wallpaper} className="size-full" />
+                </div>
+              )}
               <span className="absolute top-2 left-2 flex size-6 items-center justify-center rounded-full bg-black/60 text-xs font-semibold text-white">{index + 1}</span>
             </button>
           );

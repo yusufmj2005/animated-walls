@@ -57,6 +57,11 @@ public sealed record SessionState(
 {
     /// <summary>GDI device name of the display an exclusive fullscreen app owns.</summary>
     [JsonIgnore] public string? ExclusiveDeviceName { get; init; }
+
+    /// <summary>Nobody is connected to this session, as after a Remote Desktop disconnect.</summary>
+    public bool SessionDisconnected { get; init; }
+
+    public bool ScreenSaverRunning { get; init; }
 }
 
 public static class DisplayPowerStates
@@ -84,6 +89,8 @@ public static class RenderReasons
     public const string DesktopCovered = "desktop-covered";
     public const string ExclusiveFullscreen = "exclusive-fullscreen";
     public const string SessionLocked = "session-locked";
+    public const string SessionDisconnected = "session-disconnected";
+    public const string ScreenSaver = "screen-saver";
     public const string DisplayOff = "display-off";
     public const string SystemSuspended = "system-suspended";
     public const string OnBattery = "on-battery";

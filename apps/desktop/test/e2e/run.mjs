@@ -493,6 +493,30 @@ describe('Animated Walls', { concurrency: false }, () => {
     await page.getByRole('region', { name: 'Current wallpaper' }).getByText('Aurora Drift').waitFor();
   });
 
+  it('shows a video with no preview image on the displays map', async () => {
+    await nav(page, 'Displays');
+    await page.getByTestId('display-assignment').first().selectOption({ label: 'sample' });
+    await page.locator('main button video').first().waitFor({ state: 'attached' });
+    await page.getByTestId('display-assignment').first().selectOption({ label: 'Aurora Drift' });
+    await page.locator('main button img').first().waitFor({ state: 'attached' });
+  });
+
+  it('moves through a segmented control with the arrow keys', async () => {
+    await nav(page, 'Library');
+    const all = page.getByRole('radio', { name: 'All' });
+    await all.focus();
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.getByRole('radio', { name: 'Video' }).getAttribute('aria-checked'), 'true');
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Video');
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await page.getByRole('radio', { name: 'Web' }).getAttribute('aria-checked'), 'true', 'the left arrow should wrap around');
+    await page.keyboard.press('Home');
+    assert.equal(await all.getAttribute('aria-checked'), 'true');
+    assert.equal(await all.getAttribute('tabindex'), '0');
+    assert.equal(await page.getByRole('radio', { name: 'Web' }).getAttribute('tabindex'), '-1');
+  });
+
   it('removes a wallpaper while its video is playing', async () => {
     await nav(page, 'Library');
     await page.getByTestId('wallpaper-card').filter({ hasText: /^sample/i }).click();
@@ -528,6 +552,57 @@ describe('Animated Walls', { concurrency: false }, () => {
     assert.doesNotMatch(appLog + engineLog, /[A-Za-z0-9+/]{43}=/);
   });
 
+  it('keeps showing the assigned wallpaper while the engine is down', async () => {
+    await nav(page, 'Home');
+    const hero = page.getByRole('region', { name: 'Current wallpaper' });
+    await hero.getByText('Aurora Drift').waitFor();
+    const { health } = await page.evaluate(() => window.animatedWalls.engine.getStatus());
+    process.kill(health.pid);
+    await page.getByTestId('engine-status').getByText('Engine restarting').waitFor({ timeout: 5000 });
+    assert.match(await hero.innerText(), /Aurora Drift/);
+    await page.getByTestId('engine-status').getByText('Engine running').waitFor({ timeout: 15_000 });
+  });
+
+  it('contains a failing page, logs it, and recovers', async () => {
+    await nav(page, 'Library');
+    // formatBytes calls this while rendering Home, and nothing in React itself needs it.
+    await page.evaluate(() => {
+      window.__round = Math.round;
+      Math.round = () => {
+        throw new Error('forced render failure');
+      };
+    });
+    await nav(page, 'Home');
+    await page.getByText('This page ran into a problem').waitFor();
+    assert.equal(await page.getByRole('navigation', { name: 'Main' }).isVisible(), true);
+    await page.evaluate(() => {
+      Math.round = window.__round;
+    });
+    await page.getByRole('button', { name: 'Try again' }).click();
+    await page.getByRole('heading', { level: 1, name: 'Home' }).waitFor();
+    assert.ok(logEvents('app.log').some((line) => line.event === 'renderer.error' && /forced render failure/.test(line.data.message)));
+  });
+
+  it('logs stray errors from the UI and the main process', async () => {
+    await page.evaluate(() => {
+      setTimeout(() => {
+        throw new Error('stray renderer error');
+      });
+    });
+    await app.evaluate(() => {
+      Promise.reject(new Error('stray main rejection'));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const lines = logEvents('app.log');
+    assert.ok(lines.some((line) => line.event === 'renderer.error' && /stray renderer error/.test(line.data.message)), 'renderer error missing');
+    assert.ok(lines.some((line) => line.event === 'app.unhandled-rejection' && /stray main rejection/.test(line.data.error.message)), 'main rejection missing');
+  });
+
+  it('answers no when a page checks for a permission', async () => {
+    const state = await page.evaluate(async () => (await navigator.permissions.query({ name: 'notifications' })).state);
+    assert.equal(state, 'denied');
+  });
+
   it('quits when closed with "keep running in the tray" turned off', async () => {
     const { health } = await page.evaluate(() => window.animatedWalls.engine.getStatus());
     await page.evaluate(() => window.animatedWalls.settings.set('closeToTray', false));
@@ -550,5 +625,50 @@ describe('Animated Walls', { concurrency: false }, () => {
     const events = logEvents('app.log').map((line) => line.event);
     assert.equal(events.includes('app.fatal'), false);
     assert.equal(events.at(-1), 'app.shutdown');
+  });
+
+  it('reloads the window after a renderer crash', async () => {
+    ({ app, page } = await launch());
+    await page.getByTestId('engine-status').getByText('Engine running').waitFor({ timeout: 20_000 });
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer());
+
+    // Asked of the main process, because Playwright's page object does not survive a crash.
+    const statusText = () => app.evaluate(({ BrowserWindow }) => {
+      const { webContents } = BrowserWindow.getAllWindows()[0];
+      if (webContents.isCrashed() || webContents.isLoading()) return null;
+      return webContents.executeJavaScript('document.querySelector(\'[data-testid="engine-status"]\')?.innerText ?? null');
+    });
+    let text = null;
+    for (let attempt = 0; attempt < 60 && text !== 'Engine running'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      text = await statusText();
+    }
+    assert.equal(text, 'Engine running');
+    const events = logEvents('app.log').map((line) => line.event);
+    assert.ok(events.includes('renderer.gone') && events.includes('renderer.reloading'));
+    await quit(app);
+  });
+
+  it('stops reloading a window that keeps crashing', async () => {
+    ({ app, page } = await launch());
+    await page.getByTestId('engine-status').getByText('Engine running').waitFor({ timeout: 20_000 });
+    await app.evaluate(({ dialog }) => {
+      dialog.showErrorBox = (title) => {
+        globalThis.__errorTitle = title;
+      };
+    });
+    for (let crash = 0; crash < 3; crash += 1) {
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer());
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const ready = await app.evaluate(({ BrowserWindow }) => {
+          const { webContents } = BrowserWindow.getAllWindows()[0];
+          return !webContents.isCrashed() && !webContents.isLoading();
+        });
+        if (ready) break;
+      }
+    }
+    assert.equal(await app.evaluate(() => globalThis.__errorTitle), 'Animated Walls keeps crashing');
+    await quit(app);
   });
 });

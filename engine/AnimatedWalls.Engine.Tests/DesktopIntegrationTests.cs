@@ -83,10 +83,10 @@ public unsafe class DesktopIntegrationTests
     }
 
     [Fact]
-    public void The_lock_state_of_this_session_reads_as_unlocked()
+    public void This_session_reads_as_unlocked_and_connected()
     {
         using var logger = new StructuredLogger(null, level: LogLevel.Error);
-        Assert.False(SessionLock.Read(logger));
+        Assert.Equal((false, false), SessionInfo.Read(logger));
     }
 
     [Fact]
